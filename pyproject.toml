@@ -1,0 +1,19 @@
+[project]
+name = "atqo"
+description = "Async Task Queue Orchestrator with Complext Resource MAnagement"
+authors = [
+    "Endre Márk Borza"
+]
+license = "MIT"
+readme = "README.md"
+python = ">=3.8"
+url = "https://github.com/endremborza/atqo"
+[build-system]
+requires = [
+    "toml >= 0.10.0",
+    "setuptools >= 38.6.0",
+    "wheel >= 0.31.0",
+    "setuptools_scm >= 2.0.0, <3"
+]
+[tool.bran]
+line-length = 79
