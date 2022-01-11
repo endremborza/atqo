@@ -115,7 +115,7 @@ class CapsetExchange:
             ]
 
         if len(prices) < 2:
-            raise NotEnoughResources(f"can't start {capset}")
+            raise NotEnoughResources(f"can't ever start {capset}")
 
         return prices + [p * -1 for p in prices]
 
