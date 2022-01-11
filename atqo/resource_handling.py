@@ -1,6 +1,4 @@
 from enum import Enum
-from functools import reduce
-from operator import add
 from typing import Any, Dict, Optional, Union
 from uuid import uuid4
 
@@ -127,4 +125,4 @@ class CapabilitySet(frozenset):
 
     @property
     def total_resource_use(self) -> NumStore:
-        return reduce(add, self).resource_needs
+        return sum(self, start=Capability({})).resource_needs

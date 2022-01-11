@@ -4,6 +4,7 @@ from functools import cached_property, reduce
 from math import gcd
 from typing import Dict, Iterable, List, Tuple, Union
 
+from .exceptions import NotEnoughResources
 from .resource_handling import CapabilitySet, NumStore
 
 
@@ -113,6 +114,9 @@ class CapsetExchange:
                 if limit >= gran_need
             ]
 
+        if len(prices) < 2:
+            raise NotEnoughResources(f"can't start {capset}")
+
         return prices + [p * -1 for p in prices]
 
     def _execute_trade(self, trade: NumStore):
@@ -163,10 +167,7 @@ class CapsetExchange:
         """
         trades = []
         for capset in self._capsets:
-            capset_buys = self._get_prices(capset)
-            if len(capset_buys) < 1:
-                raise Exception(f"can't start {capset}")
-            trades += capset_buys
+            trades += self._get_prices(capset)
         return trades
 
     @cached_property

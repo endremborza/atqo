@@ -10,5 +10,9 @@ class ActorPoisoned(ActorListenBreaker):
     pass
 
 
-class NotEnoughResourcesToContinue(Exception):
+class NotEnoughResources(Exception):
+    pass
+
+
+class NotEnoughResourcesToContinue(NotEnoughResources):
     pass

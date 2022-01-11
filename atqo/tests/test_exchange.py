@@ -4,6 +4,7 @@ from random import Random
 import pytest
 
 from atqo import Capability, CapabilitySet
+from atqo.exceptions import NotEnoughResources
 from atqo.exchange import CapsetExchange
 from atqo.resource_handling import NumStore
 
@@ -106,3 +107,11 @@ def test_simple_cex(n_act, mul, param, funlist):
         fun(cex, capsets, mul, n_act, param)
         # TODO: make it work without this reset
         cex.set_values({c: 0 for c in capsets})
+
+
+def test_repr():
+
+    cex = CapsetExchange([CapabilitySet([])], {})
+    assert "0" in cex.__repr__()
+    with pytest.raises(NotEnoughResources):
+        print(cex._possible_trades)
