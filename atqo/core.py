@@ -25,7 +25,7 @@ from .resource_handling import (
 )
 
 if TYPE_CHECKING:
-    from .bases import ActorBase, DistAPIBase
+    from .bases import ActorBase, DistAPIBase  # pragma: no cover
 
 
 POISON_KEY = frozenset([])  # just make sure it comes before any other
@@ -161,6 +161,7 @@ class Scheduler:
             get_logger(
                 api=type(self._dist_api).__name__,
                 queued=self.queued_task_count,
+                working=self._running_consumer_count,
             ).info(logstr, **kwargs)
 
     def _q_of_new_capset(self, capset: CapabilitySet) -> asyncio.Queue:
@@ -223,7 +224,7 @@ class Scheduler:
         for cs, new_ideal in new_ideals.items():
             await self._actor_sets[cs].set_running_actors_to(new_ideal)
 
-        dead_end = new_needs.some_positive and self._capset_exchange.idle
+        dead_end = self.queued_task_count and self._capset_exchange.idle
 
         if dead_end:
             await self._cleanup()
@@ -340,14 +341,6 @@ class ActorSet:
             task.cancel()
 
     @property
-    def idle(self):
-        return not (self.processing_task_count + self.queued_task_count)
-
-    @property
-    def all_queues_empty(self):
-        return not self.queued_task_count
-
-    @property
     def queued_task_count(self):
         return sum([q.qsize() for q in self._async_queue_dict.values()])
 
@@ -436,7 +429,7 @@ class ActorSet:
             if next_task.fail_count > next_task.max_fails:
                 next_task.set_future(self.dist_api.parse_exception(e))
             else:
-                await self._async_queue_dict[next_task.bundle_key].put(
+                await self._async_queue_dict[next_task.requirements].put(
                     next_task
                 )
         if fails >= ALLOWED_CONSUMER_FAILS:

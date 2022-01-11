@@ -76,23 +76,16 @@ class NumStore:
     def __mul__(self, other: int):
         return type(self)({k: v * other for k, v in self._use.items()})
 
-    def __truediv__(self, other: "NumStore"):
-        assert other.some_positive
-        res = 0
-        while True:
-            if (other * (res + 1)) > self:
-                return res
-            res += 1
-
     def __add__(self, other):
-        if isinstance(other, Capability):
-            other = other.resource_needs
         assert isinstance(other, type(self))
         return type(self)(sumdict(self._use, other._use))
 
     def __sub__(self, other):
         assert isinstance(other, type(self))
         return type(self)(subdict(self._use, other._use))
+
+    def __len__(self):
+        return len(self._use)
 
     def __repr__(self):
         return str(self._use)
@@ -103,12 +96,6 @@ class NumStore:
     def __iter__(self):
         for it in self._use.items():
             yield it
-
-    def contributes(self, other: "NumStore") -> bool:
-        for k, v in other._use.items():
-            if (v > 0) and (self._use.get(k, 0) > 0):
-                return True
-        return False
 
     @property
     def min_value(self):

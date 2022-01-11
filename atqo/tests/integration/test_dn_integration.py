@@ -32,6 +32,8 @@ class _TestBase(ActorBase):
 
     def consume(self, task_arg):
         self._log(f"consuming {task_arg}")
+        if task_arg == "fing":
+            raise ValueError("oh-oh")
         return f"{self.prefix} {task_arg}"
 
     def stop(self):
@@ -67,7 +69,7 @@ class _Producer:
             return []
 
 
-@pytest.mark.parametrize("dist_sys", ["sync", "ray"])
+@pytest.mark.parametrize("dist_sys", ["sync", "ray"])  # TODO: constants
 def test_minor_integration(dist_sys):
     reorg = True
 
@@ -91,14 +93,27 @@ def test_minor_integration(dist_sys):
     ]
 
     out = []
+    errs = []
 
     def _processor(results):
         for r in results:
-            out.append(r)
+            if isinstance(r, ValueError):
+                errs.append(r)
+            else:
+                out.append(r)
 
-    scheduler.process(_Producer(tasks, tasks), _processor)
+    scheduler.process(
+        _Producer(tasks, tasks, [SchedulerTask("fing", [file_downloader])]),
+        _processor,
+    )
+    scheduler.join()
 
     assert sorted(out) == sorted(
         ["uploaded small file", "uploaded bigger file", "downloaded complex"]
         * 2
+    )
+    assert errs
+    assert (
+        "Upload"
+        in scheduler._actor_sets[CapabilitySet([file_uploader])].__repr__()
     )

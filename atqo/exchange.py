@@ -114,8 +114,10 @@ class CapsetExchange:
                 if limit >= gran_need
             ]
 
-        if len(prices) < 2:
-            raise NotEnoughResources(f"can't ever start {capset}")
+        if (len(prices) < 2) and (len(prices[0]) == 1):
+            raise NotEnoughResources(
+                f"can't ever start {capset}: \n{capset.total_resource_use}"
+            )
 
         return prices + [p * -1 for p in prices]
 

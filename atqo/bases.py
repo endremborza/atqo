@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Type
 from structlog import get_logger
 
 if TYPE_CHECKING:
-    from .core import SchedulerTask
+    from .core import SchedulerTask  # pragma: no cover
 
 
 class TaskPropertyBase:
@@ -28,7 +28,7 @@ class ActorBase(ABC):
 
     def stop(self):
         """if any cleanup needed"""
-        pass
+        pass  # pragma: no cover
 
     @cached_property
     def _log(self):

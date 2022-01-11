@@ -61,7 +61,8 @@ class RayAPI(DistAPIBase):
 
     @staticmethod
     def parse_exception(e):
-        return e.cause_cls(e.traceback_str.strip().split("\n")[-1])
+        # return e.cause_cls(e.traceback_str.strip().split("\n")[-1])
+        return e
 
 
 class SyncAPI(DistAPIBase):
