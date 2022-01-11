@@ -25,6 +25,8 @@ for extra_req_path in glob("requirements-*.txt"):
     with open(extra_req_path) as fp:
         extras_dict[extra_id] = fp.read().strip().split()
 
+extras_dict["complete"] = sum(extras_dict.values(), [])
+
 if __name__ == "__main__":
     setup(
         name=package_name,
