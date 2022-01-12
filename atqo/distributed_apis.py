@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from asyncio import Future
-from typing import TYPE_CHECKING, Any, Type
+from typing import TYPE_CHECKING, Type
 
 from structlog import get_logger
 
@@ -43,15 +43,11 @@ class RayAPI(DistAPIBase):
         self._ray_module.wait([actor.stop.remote()])
         self._ray_module.kill(actor)
 
-    def get_running_actor(
-        self,
-        actor_cls: Type["ActorBase"],
-        static_arg: Any,
-    ) -> "ActorBase":
+    def get_running_actor(self, actor_cls: Type["ActorBase"]) -> "ActorBase":
 
         # ray should get the resources here...
 
-        return self._ray_module.remote(actor_cls).remote(static_arg)
+        return self._ray_module.remote(actor_cls).remote()
 
     @staticmethod
     def get_future(actor, next_task: "SchedulerTask") -> Future:

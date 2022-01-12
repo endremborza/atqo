@@ -27,8 +27,8 @@ class _TestBase(ActorBase):
 
     prefix = "nofing"
 
-    def __init__(self, init_arg) -> None:
-        self._log(f"intited /w {init_arg}")
+    def __init__(self) -> None:
+        self._log("intited")
 
     def consume(self, task_arg):
         self._log(f"consuming {task_arg}")

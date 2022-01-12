@@ -315,8 +315,7 @@ class ActorSet:
 
     async def add_new_actor(self):
         running_actor = self.dist_api.get_running_actor(
-            actor_cls=self.actor_cls,
-            static_arg=None,  # TODO
+            actor_cls=self.actor_cls
         )
         listener_name = uuid.uuid1().hex
         coroutine = self._listen(

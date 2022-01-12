@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from asyncio import Future
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Type
+from typing import TYPE_CHECKING, Type
 
 from structlog import get_logger
 
@@ -49,11 +49,8 @@ class DistAPIBase(ABC):
         actor.stop()
 
     @staticmethod
-    def get_running_actor(
-        actor_cls: Type["ActorBase"],
-        static_arg: Any,
-    ) -> ActorBase:
-        return actor_cls(static_arg)
+    def get_running_actor(actor_cls: Type["ActorBase"]) -> ActorBase:
+        return actor_cls()
 
     @staticmethod
     def get_future(actor, next_task: "SchedulerTask") -> Future:
