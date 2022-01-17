@@ -3,6 +3,7 @@ from enum import Enum
 import pytest
 
 from atqo import ActorBase, Capability, CapabilitySet, Scheduler, SchedulerTask
+from atqo.distributed_apis import DIST_API_MAP
 
 
 class REnum(Enum):
@@ -68,7 +69,7 @@ class _Producer:
             return []
 
 
-@pytest.mark.parametrize("dist_sys", ["sync", "ray"])  # TODO: constants
+@pytest.mark.parametrize("dist_sys", [*DIST_API_MAP.keys(), "wrong"])
 def test_minor_integration(dist_sys):
     reorg = True
 

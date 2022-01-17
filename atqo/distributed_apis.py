@@ -10,7 +10,7 @@ from structlog import get_logger
 from .bases import ActorBase, DistAPIBase
 
 if TYPE_CHECKING:
-    from .core import SchedulerTask
+    from .core import SchedulerTask  # pragma: no cover
 
 logger = get_logger()
 
@@ -106,7 +106,7 @@ class MPActorWrap(ActorBase):
         self.pool.shutdown()
 
 
-def _work_mp_actor(actor_cls, in_q, out_q):
+def _work_mp_actor(actor_cls, in_q, out_q):  # pragma: no cover
     actor = actor_cls()
     while True:
         arg = in_q.get()
