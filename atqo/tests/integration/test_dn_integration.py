@@ -77,7 +77,6 @@ def test_minor_integration(dist_sys):
         actor_dict=actor_dict,
         resource_limits=LIMIT_DIC,
         distributed_system=dist_sys,
-        actor_init_args=("SUP",),
         reorganize_after_every_task=reorg,
         verbose=True,
     )
@@ -103,14 +102,16 @@ def test_minor_integration(dist_sys):
                 out.append(r)
 
     scheduler.process(
-        _Producer(tasks, tasks, [SchedulerTask("fing", [file_downloader])]),
+        _Producer(
+            tasks, tasks, [SchedulerTask("fing", [file_downloader])], tasks
+        ),
         _processor,
     )
     scheduler.join()
 
     assert sorted(out) == sorted(
         ["uploaded small file", "uploaded bigger file", "downloaded complex"]
-        * 2
+        * 3
     )
     assert errs
     assert (

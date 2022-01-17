@@ -45,7 +45,6 @@ class Scheduler:
         resource_limits: Dict[Enum, float],
         concurrent_task_limit: Callable[[List[TaskPropertyBase]], bool] = None,
         distributed_system: str = "sync",
-        actor_init_args=(),
         reorganize_after_every_task: bool = True,  # overkill
         verbose=False,
     ) -> None:
@@ -72,8 +71,6 @@ class Scheduler:
         self._verbose = verbose
         self._task_limiter = concurrent_task_limit
         self._dist_api: DistAPIBase = get_dist_api(distributed_system)()
-
-        self._actor_init_args = actor_init_args
 
         self._actor_sets = {}
         self._run(self._add_actor_sets(actor_dict))
