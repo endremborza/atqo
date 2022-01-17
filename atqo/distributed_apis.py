@@ -1,14 +1,16 @@
 import asyncio
 import logging
+import multiprocessing as mp
 from asyncio import Future
+from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, Type
 
 from structlog import get_logger
 
-from .bases import DistAPIBase
+from .bases import ActorBase, DistAPIBase
 
 if TYPE_CHECKING:
-    from .core import ActorBase, SchedulerTask
+    from .core import SchedulerTask
 
 logger = get_logger()
 
@@ -65,7 +67,57 @@ class SyncAPI(DistAPIBase):
     pass
 
 
-DIST_API_MAP = {"sync": SyncAPI, "ray": RayAPI}
+class MultiProcAPI(DistAPIBase):
+    def __init__(self) -> None:
+        self.man = mp.Manager()
+
+    def get_running_actor(self, actor_cls: Type["ActorBase"]) -> "ActorBase":
+        return MPActorWrap(actor_cls, self.man)
+
+    @staticmethod
+    def get_future(actor, next_task: "SchedulerTask") -> Future:
+        cc_future = actor.consume(next_task.argument)
+        as_fut = asyncio.wrap_future(cc_future)
+        return as_fut
+
+    def join(self):
+        self.man.shutdown()
+
+
+class MPActorWrap(ActorBase):
+    def __init__(self, inner_actor_cls: Type["ActorBase"], man: mp.Manager):
+
+        self._in_q = man.Queue(maxsize=1)
+        self._out_q = man.Queue(maxsize=1)
+        self.pool = ProcessPoolExecutor(1)
+        self.proc = mp.Process(
+            target=_work_mp_actor,
+            args=(inner_actor_cls, self._in_q, self._out_q),
+        )
+        self.proc.start()
+
+    def consume(self, task_arg):
+        self.pool.submit(self._in_q.put, task_arg)
+        return self.pool.submit(self._out_q.get)
+
+    def stop(self):
+        self.proc.kill()
+        self.proc.join()
+        self.pool.shutdown()
+
+
+def _work_mp_actor(actor_cls, in_q, out_q):
+    actor = actor_cls()
+    while True:
+        arg = in_q.get()
+        try:
+            res = actor.consume(arg)
+        except Exception as e:
+            res = e
+        out_q.put(res)
+
+
+DIST_API_MAP = {"sync": SyncAPI, "ray": RayAPI, "mp": MultiProcAPI}
 
 
 def get_dist_api(key) -> "DistAPIBase":
