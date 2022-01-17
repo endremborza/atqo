@@ -12,7 +12,6 @@ class REnum(Enum):
 
 
 LIMIT_DIC = {REnum.CPU: 6, REnum.CONN: 2000, REnum.MEM: 3500}
-# add units maybe
 
 file_uploader = Capability(
     {REnum.CPU: 1, REnum.CONN: 400, REnum.MEM: 1000}, name="ul"
