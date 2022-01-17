@@ -364,7 +364,7 @@ class ActorSet:
     async def _listen(self, running_actor: "ActorBase", name: str):
         self._logger.info(
             "consumer listening",
-            actor=type(running_actor).__name__,
+            running=type(running_actor).__name__,
         )
         fails = 0
         while True:
@@ -377,7 +377,7 @@ class ActorSet:
                 self._logger.info(
                     "stopping consumer",
                     reason=e,
-                    actor=type(running_actor).__name__,
+                    running=type(running_actor).__name__,
                 )
                 self.dist_api.kill(running_actor)
                 del self._actor_listening_async_task_dict[name]
