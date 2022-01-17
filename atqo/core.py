@@ -10,7 +10,7 @@ from structlog import get_logger
 
 from atqo.bases import TaskPropertyBase
 
-from .distributed_apis import DEFAULT_API_KEY, get_dist_api
+from .distributed_apis import DEFAULT_DIST_API_KEY, get_dist_api
 from .exceptions import (
     ActorListenBreaker,
     ActorPoisoned,
@@ -44,7 +44,7 @@ class Scheduler:
         actor_dict: Dict[CapabilitySet, Type["ActorBase"]],
         resource_limits: Dict[Enum, float],
         concurrent_task_limit: Callable[[List[TaskPropertyBase]], bool] = None,
-        distributed_system: str = DEFAULT_API_KEY,
+        distributed_system: str = DEFAULT_DIST_API_KEY,
         reorganize_after_every_task: bool = True,  # overkill
         verbose=False,
     ) -> None:
@@ -84,7 +84,10 @@ class Scheduler:
         self._active_task_properties = ActiveTaskPropertySet()
 
     def __del__(self):
-        self._dist_api.join()
+        try:
+            self._dist_api.join()
+        except AttributeError:
+            pass
 
     def process(
         self,
@@ -109,7 +112,7 @@ class Scheduler:
             self.refill_task_queue(next_batch)
             try:
                 self.wait_until_n_tasks_remain(min_queue_size)
-            except KeyboardInterrupt:  # pragma: nocover
+            except KeyboardInterrupt:  # pragma: no cover
                 self._log(f"Interrupted waiting for {self}")
                 break
 
@@ -172,7 +175,7 @@ class Scheduler:
 
     async def _add_actor_sets(self, actor_dict):
         self._actor_sets = {
-            capset: ActorSet(actor_cls, self._dist_api)
+            capset: ActorSet(actor_cls, self._dist_api, self._verbose)
             for capset, actor_cls in actor_dict.items()
         }
 
@@ -276,6 +279,7 @@ class ActorSet:
         self,
         actor_cls: Type["ActorBase"],
         dist_api: "DistAPIBase",
+        debug: bool,
     ) -> None:
         self.actor_cls = actor_cls
         self.dist_api = dist_api
@@ -289,6 +293,7 @@ class ActorSet:
         self._async_queue_get_task_dict = {
             POISON_KEY: asyncio.create_task(self._poison_queue.get())
         }
+        self._debug = debug
 
     def __repr__(self):
         dic_str = [f"{k}={v}" for k, v in self._log_dic.items()]
@@ -421,6 +426,8 @@ class ActorSet:
                 e=e,
                 te=type(e),
             )
+            if self._debug:
+                self._logger.exception(e)
             next_task.fail_count += 1
             if next_task.fail_count > next_task.max_fails:
                 next_task.set_future(self.dist_api.parse_exception(e))
