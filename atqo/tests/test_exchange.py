@@ -114,4 +114,4 @@ def test_repr():
     cex = CapsetExchange([CapabilitySet([])], {})
     assert "0" in cex.__repr__()
     with pytest.raises(NotEnoughResources):
-        print(cex._possible_trades)
+        cex._possible_trades
