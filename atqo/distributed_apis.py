@@ -118,7 +118,7 @@ def _work_mp_actor(actor_cls, in_q, out_q):  # pragma: no cover
 
 
 DIST_API_MAP = {"sync": SyncAPI, "ray": RayAPI, "mp": MultiProcAPI}
-
+DEFAULT_API_KEY = "sync"
 
 def get_dist_api(key) -> "DistAPIBase":
     try:
@@ -127,4 +127,4 @@ def get_dist_api(key) -> "DistAPIBase":
         logger.warning(
             f"unknown distributed system: {key}, defaulting to sync api"
         )
-        return SyncAPI
+        return DIST_API_MAP[DEFAULT_API_KEY]

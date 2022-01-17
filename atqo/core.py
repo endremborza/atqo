@@ -10,7 +10,7 @@ from structlog import get_logger
 
 from atqo.bases import TaskPropertyBase
 
-from .distributed_apis import get_dist_api
+from .distributed_apis import DEFAULT_API_KEY, get_dist_api
 from .exceptions import (
     ActorListenBreaker,
     ActorPoisoned,
@@ -44,7 +44,7 @@ class Scheduler:
         actor_dict: Dict[CapabilitySet, Type["ActorBase"]],
         resource_limits: Dict[Enum, float],
         concurrent_task_limit: Callable[[List[TaskPropertyBase]], bool] = None,
-        distributed_system: str = "sync",
+        distributed_system: str = DEFAULT_API_KEY,
         reorganize_after_every_task: bool = True,  # overkill
         verbose=False,
     ) -> None:
