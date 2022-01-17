@@ -3,6 +3,7 @@ import logging
 import multiprocessing as mp
 from asyncio import Future
 from concurrent.futures import ProcessPoolExecutor
+from functools import partial, partialmethod
 from typing import TYPE_CHECKING, Type
 
 from structlog import get_logger
@@ -18,9 +19,10 @@ logger = get_logger()
 class RayAPI(DistAPIBase):
     def __init__(self):
         import ray
-        from ray.exceptions import RayError
+        from ray.exceptions import RayError, RayTaskError
 
         self._exc_cls = RayError
+        self._task_exc = RayTaskError
         self._ray_module = ray
 
         ray_specs = ray.init(
@@ -48,6 +50,22 @@ class RayAPI(DistAPIBase):
     def get_running_actor(self, actor_cls: Type["ActorBase"]) -> "ActorBase":
 
         # ray should get the resources here...
+        # not working with partial :
+        if isinstance(actor_cls, partial):
+            assert not actor_cls.args, "only kwargs in partials"
+            root_cls = actor_cls.func
+            actor_cls = type(
+                root_cls.__name__,
+                (ActorBase,),
+                {
+                    k: (
+                        v
+                        if k != "__init__"
+                        else partialmethod(v, **actor_cls.keywords)
+                    )
+                    for k, v in root_cls.__dict__.items()
+                },
+            )
 
         return self._ray_module.remote(actor_cls).remote()
 
@@ -57,9 +75,10 @@ class RayAPI(DistAPIBase):
             actor.consume.remote(next_task.argument).future()
         )
 
-    @staticmethod
-    def parse_exception(e):
-        # return e.cause_cls(e.traceback_str.strip().split("\n")[-1])
+    def parse_exception(self, e):
+        if isinstance(e, self._task_exc):
+            return e.cause
+            # return e.cause_cls(e.traceback_str.strip().split("\n")[-1])
         return e
 
 
@@ -118,7 +137,8 @@ def _work_mp_actor(actor_cls, in_q, out_q):  # pragma: no cover
 
 
 DIST_API_MAP = {"sync": SyncAPI, "ray": RayAPI, "mp": MultiProcAPI}
-DEFAULT_API_KEY = "sync"
+DEFAULT_DIST_API_KEY = "sync"
+
 
 def get_dist_api(key) -> "DistAPIBase":
     try:
@@ -127,4 +147,4 @@ def get_dist_api(key) -> "DistAPIBase":
         logger.warning(
             f"unknown distributed system: {key}, defaulting to sync api"
         )
-        return DIST_API_MAP[DEFAULT_API_KEY]
+        return DIST_API_MAP[DEFAULT_DIST_API_KEY]
