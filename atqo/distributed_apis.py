@@ -139,7 +139,7 @@ def get_dist_api(key) -> "DistAPIBase":
     try:
         return DIST_API_MAP[key]
     except KeyError:
-        logger.warning(
-            f"unknown distributed system: {key}, defaulting to sync api"
-        )
-        return DIST_API_MAP[DEFAULT_DIST_API_KEY]
+        default = DIST_API_MAP[DEFAULT_DIST_API_KEY]
+        err = f"unknown distributed system: {key}, defaulting {default}"
+        logger.warning(err)
+        return default
