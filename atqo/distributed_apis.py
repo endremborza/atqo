@@ -76,10 +76,7 @@ class RayAPI(DistAPIBase):
         )
 
     def parse_exception(self, e):
-        if isinstance(e, self._task_exc):
-            return e.cause
-            # return e.cause_cls(e.traceback_str.strip().split("\n")[-1])
-        return e
+        return e.cause if isinstance(e, self._task_exc) else e
 
 
 class SyncAPI(DistAPIBase):
@@ -95,9 +92,7 @@ class MultiProcAPI(DistAPIBase):
 
     @staticmethod
     def get_future(actor, next_task: "SchedulerTask") -> Future:
-        cc_future = actor.consume(next_task.argument)
-        as_fut = asyncio.wrap_future(cc_future)
-        return as_fut
+        return asyncio.wrap_future(actor.consume(next_task.argument))
 
     def join(self):
         self.man.shutdown()
