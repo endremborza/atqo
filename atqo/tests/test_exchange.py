@@ -1,4 +1,4 @@
-from itertools import chain, combinations_with_replacement, product
+from itertools import product
 from random import Random
 
 import pytest
@@ -42,6 +42,7 @@ def test_exchange(seed, res_pop, max_caps, max_capsets):
 
     cex = CapsetExchange(capsets, resources=res_limits)
     cex.set_values(NumStore({cs: rng.randint(0, 15) for cs in capsets}))
+    assert_general(cex)
 
 
 def capset_cex_factory(n_act, mul):
@@ -55,17 +56,17 @@ def capset_cex_factory(n_act, mul):
 
 def assert_smooth(cex, capsets, mul, n_act, _):
     out = cex.set_values({c: 10 for c in capsets})
-    assert sum(out.values()) == (mul * n_act)
-    assert max(out.values()) == min(out.values())
+    assert sum(out.values()) == min(mul * n_act, 10 * n_act)
+    if (mul * n_act) > (10 * n_act):
+        assert max(out.values()) == min(out.values())
 
 
 def assert_lopside(cex, capsets, mul, n_act, param):
-    out = cex.set_values(
-        {c: n for c, n in zip(capsets, [param, *([1] * n_act)])}
-    )
+    qtasks = {c: n for c, n in zip(capsets, [param, *([1] * n_act)])}
+    out = cex.set_values(qtasks)
 
     first = [*out.values()][0]
-    assert sum(out.values()) == (mul * n_act)
+    assert sum(out.values()) == min(mul * n_act, sum(qtasks.values()))
     assert max(out.values()) == first
     if (n_act > 1) and (mul > 1):
         assert any([first > v for v in out.values()])
@@ -73,27 +74,35 @@ def assert_lopside(cex, capsets, mul, n_act, param):
 
 
 def assert_lin(cex, capsets, mul, n_act, param):
-    out = cex.set_values(
-        {c: n for c, n in zip(capsets, range(0 + param, n_act + param))}
-    )
+    qtasks = {c: n for c, n in zip(capsets, range(0 + param, n_act + param))}
+    out = cex.set_values(qtasks)
 
     last = [*out.values()][-1]
-    assert sum(out.values()) == (mul * n_act)
-    assert max(out.values()) == last
-    if (n_act > 2) and (mul > 1):
-        assert any([last > v for v in out.values()])
-    assert not any([last < v for v in out.values()])
+    assert sum(out.values()) == min(mul * n_act, sum(qtasks.values()))
+    if (mul * n_act) > sum(qtasks.values()):
+        assert max(out.values()) == last
+        if (n_act > 2) and (mul > 1):
+            assert any([last > v for v in out.values()])
+        assert not any([last < v for v in out.values()])
+
+
+def assert_general(cex: CapsetExchange):
+    assert sum(cex.actors_running.values()) <= (
+        sum(cex.tasks_queued.base_dict.values())
+    )
+
+
+def no_conseq(li):
+    for e1, e2 in zip(li[:-1], li[1:]):
+        if e1 == e2:
+            return False
+    return True
 
 
 fun_combs = [
-    *chain(
-        *[
-            combinations_with_replacement(
-                [assert_lin, assert_lopside, assert_smooth], r
-            )
-            for r in range(1, 5)
-        ]
-    )
+    comb
+    for comb in product([assert_lin, assert_lopside, assert_smooth], repeat=3)
+    if no_conseq(comb)
 ]
 
 
@@ -105,8 +114,7 @@ def test_simple_cex(n_act, mul, param, funlist):
     capsets, cex = capset_cex_factory(n_act, mul)
     for fun in funlist:
         fun(cex, capsets, mul, n_act, param)
-        # TODO: make it work without this reset
-        cex.set_values({c: 0 for c in capsets})
+        assert_general(cex)
 
 
 def test_repr():
@@ -115,3 +123,50 @@ def test_repr():
     assert "0" in cex.__repr__()
     with pytest.raises(NotEnoughResources):
         cex._possible_trades
+
+
+def test_no_overshooting():
+
+    limit = {"A": 20}
+    caps = [Capability({"A": 1}), Capability({"A": 1})]
+    cs1 = CapabilitySet(caps[:1])
+    csf = CapabilitySet(caps)
+    cex = CapsetExchange([cs1, csf], limit)
+    out = cex.set_values(NumStore({cs1: 6, csf: 6}))
+    assert out[cs1] == 6
+    assert out[csf] == 6
+
+
+# test cases
+# one containing both caps c
+
+
+def test_combining():
+    limit = {"A": 2}
+    caps = [Capability({"A": 1}), Capability({"A": 1}), Capability({"A": 1})]
+    cs_l = CapabilitySet([caps[0]])
+    cs_r = CapabilitySet([caps[-1]])
+    cs1 = CapabilitySet(caps[:-1])
+    cs2 = CapabilitySet(caps[1:])
+    cs_sides = CapabilitySet(cs_l | cs_r)
+    cex = CapsetExchange([cs1, cs2, cs_sides], limit)
+    out = cex.set_values({cs_l: 1, cs_r: 1})
+    assert out
+    # todo
+    # assert out[cex] == 1
+
+
+def test_no_overcombining():
+    limit = {"A": 3}
+    caps = [Capability({"A": 1}), Capability({"A": 1}), Capability({"A": 1})]
+    cs1 = CapabilitySet(caps[:1])
+    cs2 = CapabilitySet(caps[-1:])
+    csx = CapabilitySet(caps)
+    cex = CapsetExchange([cs1, cs2, csx], limit)
+    out = cex.set_values({cs1: 2, cs2: 2})
+    assert out[csx] == 0
+    assert sum(out.values()) == 3
+
+
+def test_trade_finding():
+    pass

@@ -28,16 +28,16 @@ class _TestBase(ActorBase):
     prefix = "nofing"
 
     def __init__(self) -> None:
-        self._log("intited")
+        self._log("TEST intited")
 
     def consume(self, task_arg):
-        self._log(f"consuming {task_arg}")
+        self._log(f"TEST consuming {task_arg}")
         if task_arg == "fing":
             raise ValueError("oh-oh")
         return f"{self.prefix} {task_arg}"
 
     def stop(self):
-        self._log("stopping")
+        self._log("TEST stopping")
 
 
 class Uploader(_TestBase):

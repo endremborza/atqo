@@ -12,7 +12,6 @@ def test_num_store():
     assert ns2 > ns1 and ns2 >= ns1 and ns1 < ns2
 
     assert ns1.min_value == 10
-    assert ns1.some_positive
     {ns1: "works in dict"}
     set([ns1, ns2])
 

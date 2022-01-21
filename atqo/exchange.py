@@ -1,6 +1,7 @@
 from collections import defaultdict
 from enum import Enum
 from functools import cached_property, reduce
+from itertools import product
 from math import gcd
 from typing import Dict, Iterable, List, Tuple, Union
 
@@ -25,35 +26,26 @@ class CapsetExchange:
         self._sources = (
             [*resources.items()] if isinstance(resources, dict) else resources
         )  # can be limited what can be used together, later
-        self._capsets = [*actor_capsets]
-        self._nc = len(self._capsets)
-        self._ns = len(self._sources)
-
-        self.tasks_under = {cs: 0 for cs in self._capsets}
-        self.actors_running = {cs: 0 for cs in self._capsets}
-        self.actors_over = {}
-        self._set_actors_over()
+        self._actor_capsets = sorted(actor_capsets)
+        self.actors_running = {cs: 0 for cs in self._actor_capsets}
+        self.tasks_queued = NumStore()
         self.idle_sources = [l // self._grans[eid] for eid, l in self._sources]
 
     def __repr__(self) -> str:
         bases = [
             ("actors used", self.actors_running),
-            ("tasks under", self.tasks_under),
+            ("tasks queued", self.tasks_queued),
             (
                 "using resources",
                 self._utilized_resources,
             ),
             ("available resources", self.idle_sources),
         ]
-        vals = [
-            (k, self._get_value(k)) for k in [*self._capsets, *range(self._ns)]
-        ]
         descr = "\n".join(f"{k}:\t{v}" for k, v in bases)
-        probdesc = "\n".join(f"{k}:\t{v}" for k, v in vals)
-        return f"Capset Exchange: \n{descr}\n\nvaluations:\n{probdesc}"
+        return f"Capset Exchange: \n{descr}\n"
 
     def set_values(self, new_values: Union[NumStore, Dict[Enum, int]]):
-        self._update_tasks_under(NumStore(new_values))
+        self.tasks_queued = NumStore(new_values)
         self._execute_positive_trades()
         return self.actors_running
 
@@ -61,65 +53,53 @@ class CapsetExchange:
     def idle(self):
         return not sum(self.actors_running.values())
 
-    def _set_actors_over(self):
-        for cs_base in self._capsets:
-            self.actors_over[cs_base] = sum(
-                [n for cs, n in self.actors_running.items() if cs >= cs_base]
-            )
-
-    def _update_tasks_under(self, new_values):
-        for cs, val in new_values:
-            self.tasks_under[cs] = val
-
     def _execute_positive_trades(self):
         while True:
-            max_value = -float("inf")
+            state = ExchangeState(self.tasks_queued, self.actors_running)
+            max_value = 0
             best_trade = None
             for trade in self._possible_trades:
-                if not self._is_trade_possible(trade):
+                if not self._is_possible(trade):
                     continue
-                trade_value = self._get_trade_value(trade)
+                trade_value = state.valuation(trade)
                 if trade_value > max_value:
                     best_trade = trade
                     max_value = trade_value
             if max_value <= 0:
                 break
             self._execute_trade(best_trade)
-            self._set_actors_over()
 
-    def _is_trade_possible(self, trade: NumStore):
+    def _is_possible(self, trade: NumStore):
         for rid, num in trade:
-            if (num + self._any_tradeable[rid]) < 0:
+            if isinstance(rid, int):
+                rem = self.idle_sources[rid]
+            else:
+                rem = self.actors_running[rid]
+            if (num + rem) < 0:
                 return False
         return True
 
-    def _get_trade_value(self, trade: NumStore):
-        return sum([n * self._get_value(rid) for rid, n in trade])
+    def _get_source_prices(self, capset: CapabilitySet):
 
-    def _get_value(self, rid: Union[CapabilitySet, int]):
-        if isinstance(rid, int):
-            return 1e-15
-        val = (self.tasks_under[rid] - 1e-2) / (self.actors_over[rid] + 1e-3)
-        return val
+        by_source = self._source_combs(capset.total_resource_use)
+        if not by_source:
+            msg = f"can't ever start {capset}: \n{capset.total_resource_use}"
+            raise NotEnoughResources(msg)
 
-    def _get_prices(self, capset: CapabilitySet):
+        return [NumStore({capset: 1}) - p for p in by_source]
 
-        prices = [NumStore({capset: 1})]
-        for res_id, res_need in capset.total_resource_use:
-            gran_need = res_need // self._grans[res_id]
-            prices = [
-                p + NumStore({sid: -gran_need})
-                for p in prices
-                for sid, limit in self._sources_by_res[res_id]
-                if limit >= gran_need
-            ]
+    def _get_barter_prices(self, capset: CapabilitySet):
 
-        if (len(prices) < 2) and (len(prices[0]) == 1):
-            raise NotEnoughResources(
-                f"can't ever start {capset}: \n{capset.total_resource_use}"
-            )
+        bf = BarterFinder(capset, self._actor_capsets)
 
-        return prices + [p * -1 for p in prices]
+        barters = []
+        for resources, barter_capsets in bf.barter_pairs:
+            if resources.min_value > 0:
+                source_combs = self._source_combs(resources.pos_part)
+                barters += [barter_capsets + sc for sc in source_combs]
+            else:
+                barters.append(barter_capsets)
+        return barters
 
     def _execute_trade(self, trade: NumStore):
         for rid, num in trade:
@@ -127,6 +107,20 @@ class CapsetExchange:
                 self.idle_sources[rid] += num
             else:
                 self.actors_running[rid] += num
+
+    def _source_combs(self, resource_use):
+        combs = []
+        for res_id, res_need in resource_use:
+            gran_need = res_need // self._grans[res_id]
+            poss_sources = [
+                NumStore({sid: gran_need})
+                for sid, limit in self._sources_by_res[res_id]
+                if limit >= gran_need
+            ]
+            combs.append(poss_sources)
+        if not combs:
+            return []
+        return [sum(poss, NumStore({})) for poss in product(*combs)]
 
     @property
     def _utilized_resources(self):
@@ -138,10 +132,6 @@ class CapsetExchange:
             start=NumStore(),
         )
 
-    @property
-    def _any_tradeable(self):
-        return {**self.actors_running, **dict(enumerate(self.idle_sources))}
-
     @cached_property
     def _grans(self):
         # granularities
@@ -149,7 +139,7 @@ class CapsetExchange:
         res_int_lists = defaultdict(list)
         for res_id, res_int in self._sources + [
             items
-            for capset in self._capsets
+            for capset in self._actor_capsets
             for items in capset.total_resource_use
         ]:
             res_int_lists[res_id].append(res_int)
@@ -165,12 +155,15 @@ class CapsetExchange:
 
         1. find all 1 actor -> idle resource trades
           - if one is not possible, raise/warn something
-        2. find some between actor trades (TODO)
+        2. find some between actor trades
         """
-        trades = []
-        for capset in self._capsets:
-            trades += self._get_prices(capset)
-        return trades
+        all_trades = []
+        for capset in self._actor_capsets:
+            all_trades += self._get_source_prices(
+                capset
+            ) + self._get_barter_prices(capset)
+
+        return all_trades + [t * -1 for t in all_trades]
 
     @cached_property
     def _sources_by_res(self) -> Dict[Enum, List[Tuple[int, int]]]:
@@ -178,3 +171,75 @@ class CapsetExchange:
         for sid, (res_id, limit) in enumerate(self._sources):
             out[res_id].append((sid, limit))
         return out
+
+
+class BarterFinder:
+    def __init__(
+        self, capset: CapabilitySet, capsets: List[CapabilitySet]
+    ) -> None:
+        self._capset = capset
+        self._possible_barters = [cs for cs in capsets if cs != capset]
+        self.barter_pairs: List[Tuple[NumStore, NumStore]] = []
+        self._get_all_barter_pairs(capset.total_resource_use)
+
+    def _get_all_barter_pairs(self, available: NumStore, in_so_far=NumStore()):
+        for capset in self._possible_barters:
+            rest = available - capset.total_resource_use
+            if rest.min_value >= 0:
+                new_far = in_so_far + NumStore({capset: 1})
+                self.barter_pairs.append(
+                    (rest, new_far + NumStore({self._capset: -1}))
+                )
+                self._get_all_barter_pairs(rest, new_far)
+
+
+class ExchangeState:
+    def __init__(self, task_dic: NumStore, actor_dic: dict):
+        self.rem_acts = actor_dic.copy()
+        self.holes = defaultdict(lambda: 0)
+        rem_tasks = 0
+        for tcs, tcount in task_dic:
+            task_stack = tcount
+            for acs, acount in self.rem_acts.items():
+                if not (acs >= tcs):
+                    continue
+                if acount > task_stack:
+                    self.rem_acts[acs] -= task_stack
+                    task_stack = 0
+                    break
+                task_stack -= acount
+                self.rem_acts[acs] = 0
+                self.holes[acs] -= task_stack
+            rem_tasks += task_stack
+
+    def valuation(self, trade: NumStore):
+        value = 0
+        for id_, c in trade:
+            if isinstance(id_, int):
+                value += c * 1e-5
+                continue
+            if c > 0:
+                if -self.holes.get(id_, 0) < c:
+                    return 0
+                value += c
+            elif c < 0:
+                if self.rem_acts[id_] < -c:
+                    value += c + self.rem_acts[id_]
+            else:
+                raise ValueError("??")
+        return value
+
+
+# tasks sufficient
+# tasks necessary
+# actors under
+# actors at
+# actors over
+
+# current value of the system:
+# - expected (max) completion time
+# for all task queues there are a set of actor queues that can process them
+# expected total time:
+
+# task queues bid. can combine a bid if pool resources
+# if x,y,z queues get one, the task/actor ratio improves by...

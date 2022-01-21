@@ -2,6 +2,7 @@ import asyncio
 import itertools
 import uuid
 from enum import Enum
+from itertools import chain
 from queue import Empty, Queue
 from threading import Thread
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Type
@@ -17,12 +18,7 @@ from .exceptions import (
     NotEnoughResourcesToContinue,
 )
 from .exchange import CapsetExchange
-from .resource_handling import (
-    ActiveTaskPropertySet,
-    Capability,
-    CapabilitySet,
-    NumStore,
-)
+from .resource_handling import Capability, CapabilitySet, NumStore
 
 if TYPE_CHECKING:
     from .bases import ActorBase, DistAPIBase  # pragma: no cover
@@ -43,7 +39,6 @@ class Scheduler:
         self,
         actor_dict: Dict[CapabilitySet, Type["ActorBase"]],
         resource_limits: Dict[Enum, float],
-        concurrent_task_limit: Callable[[List[TaskPropertyBase]], bool] = None,
         distributed_system: str = DEFAULT_DIST_API_KEY,
         reorganize_after_every_task: bool = True,  # overkill
         verbose=False,
@@ -59,29 +54,27 @@ class Scheduler:
 
         self._result_queue = Queue()
         self._active_async_tasks = set()
+        self._task_queues: Dict[CapabilitySet, TaskQueue] = {}
 
         self._loop = asyncio.new_event_loop()
 
-        self._thread = Thread(
-            target=_start_loop, args=(self._loop,), daemon=True
-        )
-        self._thread.start()
+        Thread(target=_start_loop, args=(self._loop,), daemon=True).start()
 
         self._frequent_reorg = reorganize_after_every_task
         self._verbose = verbose
-        self._task_limiter = concurrent_task_limit
         self._dist_api: DistAPIBase = get_dist_api(distributed_system)()
 
-        self._actor_sets = {}
+        self._actor_sets: Dict[CapabilitySet, ActorSet] = {}
         self._run(self._add_actor_sets(actor_dict))
 
         self._capset_exchange = CapsetExchange(
             actor_dict.keys(), resource_limits
         )
-        self._task_queues: Dict[CapabilitySet, asyncio.Queue] = {}
 
-        self._used_resources = NumStore()
-        self._active_task_properties = ActiveTaskPropertySet()
+        # TODO
+        # concurrent_task_limit: Callable[[List[TaskPropertyBase]], bool]
+        # self._active_task_properties = ActiveTaskPropertySet()
+        # self._task_limiter = concurrent_task_limit  # TODO
 
     def __del__(self):
         try:
@@ -149,7 +142,7 @@ class Scheduler:
 
     @property
     def queued_task_count(self):
-        return sum([tq.qsize() for tq in self._task_queues.values()])
+        return sum([tq.size for tq in self._task_queues.values()])
 
     def _run(self, coro, wait=True):
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
@@ -166,16 +159,22 @@ class Scheduler:
 
     def _q_of_new_capset(self, capset: CapabilitySet) -> asyncio.Queue:
 
-        new_task_queue = asyncio.Queue()
+        new_task_queue = TaskQueue()
         self._task_queues[capset] = new_task_queue
-        for a_capset, actor_set in self._actor_sets.items():
-            if a_capset >= capset:
-                actor_set.add_task_queue(new_task_queue, capset)
+        for task_cs, task_queue in self._task_queues.items():
+            if task_cs > capset:
+                task_queue.reset_ping()
         return new_task_queue
 
     async def _add_actor_sets(self, actor_dict):
         self._actor_sets = {
-            capset: ActorSet(actor_cls, self._dist_api, self._verbose)
+            capset: ActorSet(
+                actor_cls,
+                self._dist_api,
+                capset,
+                self._task_queues,
+                self._verbose,
+            )
             for capset, actor_cls in actor_dict.items()
         }
 
@@ -211,14 +210,10 @@ class Scheduler:
         value of adding: decrease caused in  target / number possible remaining
 
         """
-        needs = {
-            actor_capset: actorset.total_task_count
-            for actor_capset, actorset in self._actor_sets.items()
-        }
-
-        new_needs = NumStore(needs)
+        need_dic = {cs: t.size for cs, t in self._task_queues.items()}
+        new_needs = NumStore(need_dic)
         new_ideals = self._capset_exchange.set_values(new_needs)
-        self._log(f"reorganizing on {needs}")
+        self._log(f"reorganizing on {need_dic}")
         self._log(f"reorganizing to {new_ideals}")
 
         for cs, new_ideal in new_ideals.items():
@@ -255,7 +250,9 @@ class Scheduler:
 
     async def _cleanup(self):
         for aset in self._actor_sets.values():
-            aset.kill()
+            aset.poison_queue.cancel()
+        for t_queue in self._task_queues.values():
+            t_queue.cancel()
 
     async def _cancel_remaining_tasks(self):
         for atask in self._active_async_tasks:
@@ -274,26 +271,59 @@ class Scheduler:
         )
 
 
+class TaskQueue:
+    def __init__(self) -> None:
+        self.queue = asyncio.Queue()
+        self.getting_task: asyncio.Task = asyncio.create_task(self.queue.get())
+        self.ping = asyncio.Future()
+        self.put = self.queue.put
+
+    def reset_ping(self):
+        self.ping.set_result(None)
+        self.ping = asyncio.Future()
+
+    def pop(self):
+        out = self.getting_task.result()
+        self.getting_task = asyncio.create_task(self.queue.get())
+        return out
+
+    @property
+    def cancel(self):
+        return self.getting_task.cancel
+
+    @property
+    def done(self):
+        return self.getting_task.done
+
+    @property
+    def size(self):
+        return self.queue.qsize() + int(self.getting_task.done())
+
+    @property
+    def tasks(self):
+        return [self.ping, self.getting_task]
+
+
 class ActorSet:
     def __init__(
         self,
         actor_cls: Type["ActorBase"],
         dist_api: "DistAPIBase",
+        capset: CapabilitySet,
+        task_queues: Dict[CapabilitySet, TaskQueue],
         debug: bool,
     ) -> None:
         self.actor_cls = actor_cls
         self.dist_api = dist_api
+        self.capset = capset
 
-        self._poison_queue = asyncio.Queue()
-        self._async_queue_dict: Dict[str, asyncio.Queue] = {
-            POISON_KEY: self._poison_queue
-        }
-        self._actor_listening_async_task_dict: Dict[str, asyncio.Task] = {}
+        self.poison_queue = TaskQueue()
         self._poisoning_done_future = asyncio.Future()
-        self._async_queue_get_task_dict = {
-            POISON_KEY: asyncio.create_task(self._poison_queue.get())
-        }
+        self._task_queues = task_queues
+        self._actor_listening_async_task_dict: Dict[str, asyncio.Task] = {}
         self._debug = debug
+
+        self._async_queue_get_task_dict = ...
 
     def __repr__(self):
         dic_str = [f"{k}={v}" for k, v in self._log_dic.items()]
@@ -310,7 +340,7 @@ class ActorSet:
         n = 0
         for _ in range(target_count, self.running_actor_count):
             n += 1
-            await self._poison_queue.put(POISON_PILL)
+            await self.poison_queue.put(POISON_PILL)
             await self._poisoning_done_future
             self._poisoning_done_future = asyncio.Future()
         return n
@@ -328,32 +358,9 @@ class ActorSet:
         self._logger.info("adding consumer", listener_task=task.get_name())
         self._actor_listening_async_task_dict[listener_name] = task
 
-    def add_task_queue(self, task_queue: asyncio.Queue, key: CapabilitySet):
-        # TODO: ping here to expand what this is waiting for
-        # in _get_next_task
-        self._async_queue_dict[key] = task_queue
-        self._async_queue_get_task_dict[key] = asyncio.create_task(
-            self._async_queue_dict[key].get()
-        )
-
-    def kill(self):
-
-        for task in self._async_queue_get_task_dict.values():
-            task.cancel()
-
     @property
-    def queued_task_count(self):
-        return sum([q.qsize() for q in self._async_queue_dict.values()])
-
-    @property
-    def processing_task_count(self):
-        return sum(
-            [t.done() for t in self._async_queue_get_task_dict.values()]
-        )
-
-    @property
-    def total_task_count(self):
-        return self.processing_task_count + self.queued_task_count
+    def task_count(self):
+        return sum([q.size for q in self._task_queues.values()])
 
     @property
     def running_actor_count(self):
@@ -391,22 +398,12 @@ class ActorSet:
     async def _get_next_task(self) -> "SchedulerTask":
         while True:
             await asyncio.wait(
-                self._async_queue_get_task_dict.values(),
+                self._wait_on_tasks,
                 return_when="FIRST_COMPLETED",
             )
-            for rkey, astask in sorted(
-                self._async_queue_get_task_dict.items(),
-                key=lambda kv: kv[0],
-                reverse=True,  # TODO why??
-            ):
-                if astask.done():
-                    next_task = self._async_queue_get_task_dict.pop(
-                        rkey
-                    ).result()
-                    self._async_queue_get_task_dict[
-                        rkey
-                    ] = asyncio.create_task(self._async_queue_dict[rkey].get())
-                    return next_task
+            for t_queue in self._sorted_queues:
+                if t_queue.done():
+                    return t_queue.pop()
 
     async def _process_task(
         self,
@@ -432,12 +429,26 @@ class ActorSet:
             if next_task.fail_count > next_task.max_fails:
                 next_task.set_future(self.dist_api.parse_exception(e))
             else:
-                await self._async_queue_dict[next_task.requirements].put(
-                    next_task
-                )
+                await self._task_queues[next_task.requirements].put(next_task)
         if fails >= ALLOWED_CONSUMER_FAILS:
             raise ActorListenBreaker(f"{fails} number of fails reached")
         return fails + 1
+
+    @property
+    def _wait_on_tasks(self):
+        return chain(
+            *[
+                t.tasks
+                for tcs, t in self._task_queues.items()
+                if tcs <= self.capset
+            ],
+            [self.poison_queue.getting_task],
+        )
+
+    @property
+    def _sorted_queues(self):
+        keys = sorted(filter(self.capset.__le__, self._task_queues.keys()))
+        return reversed([self.poison_queue, *map(self._task_queues.get, keys)])
 
     @property
     def _logger(self):
@@ -447,8 +458,7 @@ class ActorSet:
     def _log_dic(self):
         return {
             "actor": self.actor_cls.__name__,
-            "queued": self.queued_task_count,
-            "processing": self.processing_task_count,
+            "tasks": self.task_count,
             "actors_running": self.running_actor_count,
         }
 
