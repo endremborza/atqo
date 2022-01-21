@@ -101,7 +101,6 @@ class Scheduler:
             if empty_batch:
                 self.wait_until_n_tasks_remain(0)
                 continue
-
             self.refill_task_queue(next_batch)
             try:
                 self.wait_until_n_tasks_remain(min_queue_size)
@@ -437,18 +436,18 @@ class ActorSet:
     @property
     def _wait_on_tasks(self):
         return chain(
-            *[
-                t.tasks
-                for tcs, t in self._task_queues.items()
-                if tcs <= self.capset
-            ],
+            *[self._task_queues[k].tasks for k in self._task_keys],
             [self.poison_queue.getting_task],
         )
 
     @property
     def _sorted_queues(self):
-        keys = sorted(filter(self.capset.__le__, self._task_queues.keys()))
+        keys = sorted(self._task_keys)
         return reversed([self.poison_queue, *map(self._task_queues.get, keys)])
+
+    @property
+    def _task_keys(self):
+        return filter(self.capset.__ge__, self._task_queues.keys())
 
     @property
     def _logger(self):
