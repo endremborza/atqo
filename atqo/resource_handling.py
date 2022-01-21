@@ -47,20 +47,20 @@ class ActiveTaskPropertySet:
 class NumStore:
     def __init__(self, use: Optional[Dict[Any, float]] = None):
         if isinstance(use, type(self)):
-            use = use._use
-        self._use = use or {}
-        self.get = self._use.get
+            use = use.base_dict
+        self.base_dict = use or {}
+        self.get = self.base_dict.get
 
     def __eq__(self, other):
         assert isinstance(other, type(self))
-        return self._use == other._use
+        return self.base_dict == other.base_dict
 
     def __le__(self, other):
         assert isinstance(other, type(self))
         return all(
             [
-                v <= other._use.get(k, -float("inf"))
-                for k, v in self._use.items()
+                v <= other.base_dict.get(k, -float("inf"))
+                for k, v in self.base_dict.items()
             ]
         )
 
@@ -74,36 +74,36 @@ class NumStore:
         return not (self == other) & (self >= other)
 
     def __mul__(self, other: int):
-        return type(self)({k: v * other for k, v in self._use.items()})
+        return type(self)({k: v * other for k, v in self.base_dict.items()})
 
     def __add__(self, other):
         assert isinstance(other, type(self))
-        return type(self)(sumdict(self._use, other._use))
+        return type(self)(sumdict(self.base_dict, other.base_dict))
 
     def __sub__(self, other):
         assert isinstance(other, type(self))
-        return type(self)(subdict(self._use, other._use))
+        return type(self)(subdict(self.base_dict, other.base_dict))
 
     def __len__(self):
-        return len(self._use)
+        return len(self.base_dict)
 
     def __repr__(self):
-        return str(self._use)
+        return str(self.base_dict)
 
     def __hash__(self) -> int:
-        return frozenset(self._use.items()).__hash__()
+        return frozenset(self.base_dict.items()).__hash__()
 
     def __iter__(self):
-        for it in self._use.items():
+        for it in self.base_dict.items():
             yield it
 
     @property
     def min_value(self):
-        return min(self._use.values())
+        return min(self.base_dict.values())
 
     @property
-    def some_positive(self):
-        return max(self._use.values()) > 0
+    def pos_part(self):
+        return type(self)({k: v for k, v in self if v > 0})
 
 
 class CapabilitySet(frozenset):
