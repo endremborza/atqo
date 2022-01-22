@@ -1,2 +1,5 @@
+v0.0.7
+------
+
 - accomodate input extending result producing
 - bump v
