@@ -91,8 +91,8 @@ class Scheduler:
 
         while True:
             is_done = self.is_idle
-            next_batch = batch_producer()
             (result_processor or list)(self.get_processed_results())
+            next_batch = batch_producer()
             batch_size = len(next_batch)
             empty_batch = batch_size == 0
             self._log("new batch", size=batch_size, was_done=is_done)
