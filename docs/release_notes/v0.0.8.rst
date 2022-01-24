@@ -1,3 +1,6 @@
+v0.0.8
+------
+
 - exchange cleanup
 - drop len
 - add locks stores
