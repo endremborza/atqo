@@ -50,3 +50,15 @@ def test_batch(fun, inl):
         assert sorted(mres) == sorted(res)
         for _w in [str, type]:
             assert set(map(_w, mex)) == set(map(_w, exs))
+
+
+def test_extras():
+
+    with pytest.raises(TypeError):
+        parallel_map(
+            add2,
+            [1, 2, 3, "X", "Y"],
+            batch_size=3,
+            pbar=True,
+            raise_errors=True,
+        )
