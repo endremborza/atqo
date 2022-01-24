@@ -222,24 +222,6 @@ class ExchangeState:
                 if -self.holes.get(id_, 0) < c:
                     return 0
                 value += c
-            elif c < 0:
-                if self.rem_acts[id_] < -c:
-                    value += c + self.rem_acts[id_]
-            else:
-                raise ValueError("??")
+            if self.rem_acts[id_] < -c:
+                value += c + self.rem_acts[id_]
         return value
-
-
-# tasks sufficient
-# tasks necessary
-# actors under
-# actors at
-# actors over
-
-# current value of the system:
-# - expected (max) completion time
-# for all task queues there are a set of actor queues that can process them
-# expected total time:
-
-# task queues bid. can combine a bid if pool resources
-# if x,y,z queues get one, the task/actor ratio improves by...
