@@ -9,7 +9,8 @@ if TYPE_CHECKING:
     from .core import SchedulerTask  # pragma: no cover
 
 
-class TaskPropertyBase:
+class TaskPropertyBase:  # pragma: no cover
+    # TODO
     def __repr__(self):
         param_str = ", ".join(f"{k}={v}" for k, v in self.__dict__.items())
         return f"{type(self).__name__}({param_str})"
