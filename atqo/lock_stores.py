@@ -35,7 +35,11 @@ class FileLockStore(LockStoreBase):
         return self._lock_cls(self._get_path(key))
 
     def _get_path(self, key):
-        path = Path(self.root, Path(key).relative_to("/"))
+        try:
+            subpath = Path(key).relative_to(Path(self.root).root)
+        except ValueError:
+            subpath = Path(key)
+        path = Path(self.root, subpath)
         path.parent.mkdir(exist_ok=True, parents=True)
         return path
 
