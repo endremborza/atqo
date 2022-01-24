@@ -1,3 +1,4 @@
+from functools import partial
 from itertools import islice
 from multiprocessing import cpu_count
 
@@ -30,11 +31,12 @@ class ActWrap(ActorBase):
         return self._f(task_arg)
 
 
-def get_simp_scheduler(n, fun, dist_sys) -> Scheduler:
+def get_simp_scheduler(n, fun, dist_sys, verbose) -> Scheduler:
     return Scheduler(
         actor_dict={CapabilitySet([_CAP]): partial_wrap(ActWrap, fun=fun)},
         resource_limits={_RES: n},
         distributed_system=dist_sys,
+        verbose=verbose,
     )
 
 
@@ -45,19 +47,34 @@ def parallel_map(
     batch_size=None,
     min_queue_size=None,
     workers=None,
+    raise_errors=False,
+    verbose=False,
+    pbar=False,
 ):
     nw = workers or cpu_count()
     batch_size = batch_size or nw * 5
     min_queue_size = min_queue_size or batch_size // 2
 
-    scheduler = get_simp_scheduler(nw, fun, dist_api)
+    if pbar:
+        from tqdm import tqdm
+
+        iterable = tqdm(iterable)
+
+    scheduler = get_simp_scheduler(nw, fun, dist_api, verbose)
 
     out = []
+    outmap = partial(_raiser, li=out) if raise_errors else out.append
 
     scheduler.process(
         batch_producer=BatchProd(iterable, batch_size),
-        result_processor=lambda li: [*map(out.append, li)],
+        result_processor=lambda li: [*map(outmap, li)],
         min_queue_size=min_queue_size,
     )
     scheduler.join()
     return out
+
+
+def _raiser(e, li):
+    if isinstance(e, Exception):
+        raise e
+    li.append(e)
