@@ -79,7 +79,7 @@ class Scheduler:
     def __del__(self):
         try:
             self._dist_api.join()
-        except AttributeError:
+        except AttributeError:  # pragma: no cover
             pass
 
     def process(
@@ -414,6 +414,8 @@ class ActorSet:
             raise ActorPoisoned("poisoned")
         try:
             out = await self.dist_api.get_future(running_actor, next_task)
+            if isinstance(out, Exception):
+                raise out
             next_task.set_future(out)
             return 0
         except self.dist_api.exception as e:
