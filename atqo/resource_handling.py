@@ -84,9 +84,6 @@ class NumStore:
         assert isinstance(other, type(self))
         return type(self)(subdict(self.base_dict, other.base_dict))
 
-    def __len__(self):
-        return len(self.base_dict)
-
     def __repr__(self):
         return str(self.base_dict)
 
