@@ -40,7 +40,7 @@ class Scheduler:
         actor_dict: Dict[CapabilitySet, Type["ActorBase"]],
         resource_limits: Dict[Enum, float],
         distributed_system: str = DEFAULT_DIST_API_KEY,
-        reorganize_after_every_task: bool = True,  # overkill
+        reorganize_after_every_task: bool = False,  # overkill
         verbose=False,
     ) -> None:
         """Core scheduler class
