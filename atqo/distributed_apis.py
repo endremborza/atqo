@@ -131,8 +131,13 @@ def _work_mp_actor(actor_cls, in_q, out_q):  # pragma: no cover
         out_q.put(res)
 
 
-DIST_API_MAP = {"sync": SyncAPI, "ray": RayAPI, "mp": MultiProcAPI}
 DEFAULT_DIST_API_KEY = "sync"
+DEFAULT_MULTI_API = "mp"
+DIST_API_MAP = {
+    DEFAULT_DIST_API_KEY: SyncAPI,
+    "ray": RayAPI,
+    DEFAULT_MULTI_API: MultiProcAPI,
+}
 
 
 def get_dist_api(key) -> "DistAPIBase":
