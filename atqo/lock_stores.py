@@ -39,7 +39,7 @@ class FileLockStore(LockStoreBase):
             subpath = Path(key).relative_to(Path(self.root).root)
         except ValueError:
             subpath = Path(key)
-        path = Path(self.root, subpath)
+        path = Path(self.root, subpath).with_suffix(".lock")
         path.parent.mkdir(exist_ok=True, parents=True)
         return path
 
