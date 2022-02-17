@@ -1,1 +1,4 @@
+v0.0.11
+------
+
 - win compatible file suffix
