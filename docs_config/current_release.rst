@@ -1,1 +1,1 @@
-- win compatible file suffix
+- restrict stp
