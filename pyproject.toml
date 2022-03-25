@@ -1,6 +1,6 @@
 [project]
 name = "atqo"
-description = "Async Task Queue Orchestrator with Complext Resource MAnagement"
+description = "Async Task Queue Orchestrator with Complex Resource Management"
 authors = [
     "Endre Márk Borza"
 ]
