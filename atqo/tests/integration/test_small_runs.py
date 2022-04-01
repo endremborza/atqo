@@ -73,9 +73,7 @@ def test_recurse():
         verbose=True,
     )
 
-    tasks = [
-        SchedulerTask(f"task{i}", requirements=[cap1]) for i in range(1, 9)
-    ]
+    tasks = [SchedulerTask(f"task{i}", requirements=[cap1]) for i in range(1, 9)]
 
     out = []
 

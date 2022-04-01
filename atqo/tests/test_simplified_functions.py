@@ -20,9 +20,7 @@ def div(x):
 
 @pytest.mark.parametrize(
     ["fun", "inl"],
-    product(
-        [add2, extstr, div], [[1, 2, 3, 4], ["a", 10, "b", 3], [None, 2, 0]]
-    ),
+    product([add2, extstr, div], [[1, 2, 3, 4], ["a", 10, "b", 3], [None, 2, 0]]),
 )
 def test_batch(fun, inl):
     res = []

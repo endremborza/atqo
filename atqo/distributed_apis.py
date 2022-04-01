@@ -59,9 +59,7 @@ class RayAPI(DistAPIBase):
                 (ActorBase,),
                 {
                     k: (
-                        v
-                        if k != "__init__"
-                        else partialmethod(v, **actor_cls.keywords)
+                        v if k != "__init__" else partialmethod(v, **actor_cls.keywords)
                     )
                     for k, v in root_cls.__dict__.items()
                 },
@@ -71,9 +69,7 @@ class RayAPI(DistAPIBase):
 
     @staticmethod
     def get_future(actor, next_task: "SchedulerTask") -> Future:
-        return asyncio.wrap_future(
-            actor.consume.remote(next_task.argument).future()
-        )
+        return asyncio.wrap_future(actor.consume.remote(next_task.argument).future())
 
     def parse_exception(self, e):
         return e.cause if isinstance(e, self._task_exc) else e

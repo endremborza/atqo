@@ -125,10 +125,7 @@ class CapsetExchange:
     @property
     def _utilized_resources(self):
         return sum(
-            [
-                cs.total_resource_use * n
-                for cs, n in self.actors_running.items()
-            ],
+            [cs.total_resource_use * n for cs, n in self.actors_running.items()],
             start=NumStore(),
         )
 
@@ -145,8 +142,7 @@ class CapsetExchange:
             res_int_lists[res_id].append(res_int)
 
         return {
-            res_id: reduce(gcd, res_ints)
-            for res_id, res_ints in res_int_lists.items()
+            res_id: reduce(gcd, res_ints) for res_id, res_ints in res_int_lists.items()
         }
 
     @cached_property
@@ -159,9 +155,9 @@ class CapsetExchange:
         """
         all_trades = []
         for capset in self._actor_capsets:
-            all_trades += self._get_source_prices(
+            all_trades += self._get_source_prices(capset) + self._get_barter_prices(
                 capset
-            ) + self._get_barter_prices(capset)
+            )
 
         return all_trades + [t * -1 for t in all_trades]
 
@@ -174,9 +170,7 @@ class CapsetExchange:
 
 
 class BarterFinder:
-    def __init__(
-        self, capset: CapabilitySet, capsets: List[CapabilitySet]
-    ) -> None:
+    def __init__(self, capset: CapabilitySet, capsets: List[CapabilitySet]) -> None:
         self._capset = capset
         self._possible_barters = [cs for cs in capsets if cs != capset]
         self.barter_pairs: List[Tuple[NumStore, NumStore]] = []
@@ -187,9 +181,7 @@ class BarterFinder:
             rest = available - capset.total_resource_use
             if rest.min_value >= 0:
                 new_far = in_so_far + NumStore({capset: 1})
-                self.barter_pairs.append(
-                    (rest, new_far + NumStore({self._capset: -1}))
-                )
+                self.barter_pairs.append((rest, new_far + NumStore({self._capset: -1})))
                 self._get_all_barter_pairs(rest, new_far)
 
 

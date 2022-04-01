@@ -20,6 +20,4 @@ def test_dead_end():
     scheduler = Scheduler({CapabilitySet([cap1]): None}, {"A": 1})
 
     with pytest.raises(NotEnoughResources):
-        scheduler.refill_task_queue(
-            [SchedulerTask("x", requirements=[cap1, cap2])]
-        )
+        scheduler.refill_task_queue([SchedulerTask("x", requirements=[cap1, cap2])])

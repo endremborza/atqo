@@ -20,8 +20,7 @@ def test_exchange(seed, res_pop, max_caps, max_capsets):
     resources = rng.sample(res_pop, rng.randint(1, pop_n))
     res_n = len(resources)
     res_limits = [
-        (r, int(round(rng.random() * rng.randint(10, 200), -1)) + 50)
-        for r in resources
+        (r, int(round(rng.random() * rng.randint(10, 200), -1)) + 50) for r in resources
     ]
     capcount = rng.randint(1, max_caps)
     caps = [

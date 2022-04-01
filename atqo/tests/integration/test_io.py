@@ -6,12 +6,7 @@ from random import Random
 import pytest
 
 from atqo.distributed_apis import DIST_API_MAP
-from atqo.lock_stores import (
-    SEPARATOR,
-    STORE_DICT,
-    LockStoreBase,
-    get_lock_store,
-)
+from atqo.lock_stores import SEPARATOR, STORE_DICT, LockStoreBase, get_lock_store
 from atqo.simplified_functions import parallel_map
 
 

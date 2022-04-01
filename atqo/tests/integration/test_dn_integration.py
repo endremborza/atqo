@@ -14,13 +14,9 @@ class REnum(Enum):
 
 LIMIT_DIC = {REnum.CPU: 6, REnum.CONN: 2000, REnum.MEM: 3500}
 
-file_uploader = Capability(
-    {REnum.CPU: 1, REnum.CONN: 400, REnum.MEM: 1000}, name="ul"
-)
+file_uploader = Capability({REnum.CPU: 1, REnum.CONN: 400, REnum.MEM: 1000}, name="ul")
 bigfile_handling = Capability({REnum.CONN: 100, REnum.MEM: 1000}, name="big")
-file_downloader = Capability(
-    {REnum.CPU: 1, REnum.CONN: 500, REnum.MEM: 750}, name="dl"
-)
+file_downloader = Capability({REnum.CPU: 1, REnum.CONN: 500, REnum.MEM: 750}, name="dl")
 
 
 class _TestBase(ActorBase):
@@ -83,12 +79,8 @@ def test_minor_integration(dist_sys):
 
     tasks = [
         SchedulerTask("small file", requirements=[file_uploader]),
-        SchedulerTask(
-            "bigger file", requirements=[file_uploader, bigfile_handling]
-        ),
-        SchedulerTask(
-            "complex", requirements=[file_downloader, bigfile_handling]
-        ),
+        SchedulerTask("bigger file", requirements=[file_uploader, bigfile_handling]),
+        SchedulerTask("complex", requirements=[file_downloader, bigfile_handling]),
     ]
 
     out = []
@@ -102,19 +94,13 @@ def test_minor_integration(dist_sys):
                 out.append(r)
 
     scheduler.process(
-        _Producer(
-            tasks, tasks, [SchedulerTask("fing", [file_downloader])], tasks
-        ),
+        _Producer(tasks, tasks, [SchedulerTask("fing", [file_downloader])], tasks),
         _processor,
     )
     scheduler.join()
 
     assert sorted(out) == sorted(
-        ["uploaded small file", "uploaded bigger file", "downloaded complex"]
-        * 3
+        ["uploaded small file", "uploaded bigger file", "downloaded complex"] * 3
     )
     assert errs
-    assert (
-        "Upload"
-        in scheduler._actor_sets[CapabilitySet([file_uploader])].__repr__()
-    )
+    assert "Upload" in scheduler._actor_sets[CapabilitySet([file_uploader])].__repr__()

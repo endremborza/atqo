@@ -12,11 +12,7 @@ from structlog import get_logger
 from atqo.bases import TaskPropertyBase
 
 from .distributed_apis import DEFAULT_DIST_API_KEY, get_dist_api
-from .exceptions import (
-    ActorListenBreaker,
-    ActorPoisoned,
-    NotEnoughResourcesToContinue,
-)
+from .exceptions import ActorListenBreaker, ActorPoisoned, NotEnoughResourcesToContinue
 from .exchange import CapsetExchange
 from .resource_handling import Capability, CapabilitySet, NumStore
 
@@ -67,9 +63,7 @@ class Scheduler:
         self._actor_sets: Dict[CapabilitySet, ActorSet] = {}
         self._run(self._add_actor_sets(actor_dict))
 
-        self._capset_exchange = CapsetExchange(
-            actor_dict.keys(), resource_limits
-        )
+        self._capset_exchange = CapsetExchange(actor_dict.keys(), resource_limits)
 
         # TODO
         # concurrent_task_limit: Callable[[List[TaskPropertyBase]], bool]
@@ -259,9 +253,7 @@ class Scheduler:
 
     @property
     def _running_consumer_count(self):
-        return sum(
-            [aset.running_actor_count for aset in self._actor_sets.values()]
-        )
+        return sum([aset.running_actor_count for aset in self._actor_sets.values()])
 
     @property
     def _all_actors(self):
@@ -345,9 +337,7 @@ class ActorSet:
         return n
 
     async def add_new_actor(self):
-        running_actor = self.dist_api.get_running_actor(
-            actor_cls=self.actor_cls
-        )
+        running_actor = self.dist_api.get_running_actor(actor_cls=self.actor_cls)
         listener_name = uuid.uuid1().hex
         coroutine = self._listen(
             running_actor=running_actor,
@@ -378,9 +368,7 @@ class ActorSet:
         while True:
             next_task = await self._get_next_task()
             try:
-                fails = await self._process_task(
-                    running_actor, next_task, fails
-                )
+                fails = await self._process_task(running_actor, next_task, fails)
             except ActorListenBreaker as e:
                 self._logger.info(
                     "stopping consumer",
