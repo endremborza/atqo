@@ -5,4 +5,3 @@
 [![codecov](https://img.shields.io/codecov/c/github/endremborza/atqo)](https://codecov.io/gh/endremborza/atqo)
 [![pypi](https://img.shields.io/pypi/v/atqo.svg)](https://pypi.org/project/atqo/)
 
-add keywords to pyproject.toml
