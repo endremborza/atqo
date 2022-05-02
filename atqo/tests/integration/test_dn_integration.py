@@ -67,13 +67,11 @@ class _Producer:
 
 @pytest.mark.parametrize("dist_sys", [*DIST_API_MAP.keys(), "wrong"])
 def test_minor_integration(dist_sys):
-    reorg = True
 
     scheduler = Scheduler(
         actor_dict=actor_dict,
         resource_limits=LIMIT_DIC,
         distributed_system=dist_sys,
-        reorganize_after_every_task=reorg,
         verbose=True,
     )
 

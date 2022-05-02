@@ -1,6 +1,7 @@
 import asyncio
 import itertools
 import uuid
+from dataclasses import dataclass
 from enum import Enum
 from itertools import chain
 from queue import Empty, Queue
@@ -9,8 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Type
 
 from structlog import get_logger
 
-from atqo.bases import TaskPropertyBase
-
+from .bases import TaskPropertyBase
 from .distributed_apis import DEFAULT_DIST_API_KEY, get_dist_api
 from .exceptions import ActorListenBreaker, ActorPoisoned, NotEnoughResourcesToContinue
 from .exchange import CapsetExchange
@@ -30,13 +30,18 @@ def _start_loop(loop: asyncio.AbstractEventLoop) -> None:
     loop.run_forever()
 
 
+def _get_loop_of_daemon():
+    loop = asyncio.new_event_loop()
+    Thread(target=_start_loop, args=(loop,), daemon=True).start()
+    return loop
+
+
 class Scheduler:
     def __init__(
         self,
         actor_dict: Dict[CapabilitySet, Type["ActorBase"]],
         resource_limits: Dict[Enum, float],
         distributed_system: str = DEFAULT_DIST_API_KEY,
-        reorganize_after_every_task: bool = False,  # overkill
         verbose=False,
     ) -> None:
         """Core scheduler class
@@ -51,24 +56,19 @@ class Scheduler:
         self._result_queue = Queue()
         self._active_async_tasks = set()
         self._task_queues: Dict[CapabilitySet, TaskQueue] = {}
+        self._loop = _get_loop_of_daemon()
 
-        self._loop = asyncio.new_event_loop()
-
-        Thread(target=_start_loop, args=(self._loop,), daemon=True).start()
-
-        self._frequent_reorg = reorganize_after_every_task
         self._verbose = verbose
         self._dist_api: DistAPIBase = get_dist_api(distributed_system)()
 
         self._actor_sets: Dict[CapabilitySet, ActorSet] = {}
         self._run(self._add_actor_sets(actor_dict))
-
         self._capset_exchange = CapsetExchange(actor_dict.keys(), resource_limits)
 
         # TODO
         # concurrent_task_limit: Callable[[List[TaskPropertyBase]], bool]
         # self._active_task_properties = ActiveTaskPropertySet()
-        # self._task_limiter = concurrent_task_limit  # TODO
+        # self._task_limiter = concurrent_task_limit
 
     def __del__(self):
         try:
@@ -151,7 +151,6 @@ class Scheduler:
             ).info(logstr, **kwargs)
 
     def _q_of_new_capset(self, capset: CapabilitySet) -> asyncio.Queue:
-
         new_task_queue = TaskQueue()
         self._task_queues[capset] = new_task_queue
         for task_cs, task_queue in self._task_queues.items():
@@ -188,8 +187,10 @@ class Scheduler:
         self, scheduler_task: "SchedulerTask"
     ):
         scheduler_task.init_future()
-        task_result = await scheduler_task.future
-        self._result_queue.put(task_result)
+        task_result: TaskResult = await scheduler_task.future
+        self._result_queue.put(task_result.value)
+        if task_result.is_last_in_queue and self.queued_task_count:
+            await self._reorganize_actors()
 
     async def _reorganize_actors(self):
         """optimize actor set sizes
@@ -222,19 +223,12 @@ class Scheduler:
             )
 
     async def _await_until(self, remaining_tasks: int = 0):
-        return_when = (
-            "FIRST_COMPLETED"
-            if (self._frequent_reorg or remaining_tasks) > 0
-            else "ALL_COMPLETED"
-        )
+        return_when = "FIRST_COMPLETED" if remaining_tasks > 0 else "ALL_COMPLETED"
         while len(self._active_async_tasks) > remaining_tasks:
             done, _ = await asyncio.wait(
                 self._active_async_tasks, return_when=return_when
             )
             self._active_async_tasks.difference_update(done)
-            if self._frequent_reorg:
-                await self._reorganize_actors()
-
         await self._reorganize_actors()
 
     async def _drain_all_actor_sets(self):
@@ -314,8 +308,6 @@ class ActorSet:
         self._actor_listening_async_task_dict: Dict[str, asyncio.Task] = {}
         self._debug = debug
 
-        self._async_queue_get_task_dict = ...
-
     def __repr__(self):
         dic_str = [f"{k}={v}" for k, v in self._log_dic.items()]
         return f"{type(self).__name__}({', '.join(dic_str)}"
@@ -344,7 +336,7 @@ class ActorSet:
             name=listener_name,
         )
         task = asyncio.create_task(coroutine, name=listener_name)
-        self._logger.info("adding consumer", listener_task=task.get_name())
+        self._log("adding consumer", listener_task=task.get_name())
         self._actor_listening_async_task_dict[listener_name] = task
 
     @property
@@ -360,7 +352,7 @@ class ActorSet:
         return self._actor_listening_async_task_dict.values()
 
     async def _listen(self, running_actor: "ActorBase", name: str):
-        self._logger.info(
+        self._log(
             "consumer listening",
             running=type(running_actor).__name__,
         )
@@ -370,7 +362,7 @@ class ActorSet:
             try:
                 fails = await self._process_task(running_actor, next_task, fails)
             except ActorListenBreaker as e:
-                self._logger.info(
+                self._log(
                     "stopping consumer",
                     reason=e,
                     running=type(running_actor).__name__,
@@ -404,24 +396,30 @@ class ActorSet:
             out = await self.dist_api.get_future(running_actor, next_task)
             if isinstance(out, Exception):
                 raise out
-            next_task.set_future(out)
+            result = TaskResult(out, True, self._is_last(next_task))
+            next_task.set_future(result)
             return 0
         except self.dist_api.exception as e:
-            self._logger.warning(
-                "Remote consumption error ",
-                e=e,
-                te=type(e),
-            )
+            self._log("Remote consumption error ", e=e, te=type(e))
             if self._debug:
                 self._logger.exception(e)
             next_task.fail_count += 1
             if next_task.fail_count > next_task.max_fails:
-                next_task.set_future(self.dist_api.parse_exception(e))
+                is_last = self._is_last(next_task)
+                result = TaskResult(self.dist_api.parse_exception(e), False, is_last)
+                next_task.set_future(result)
             else:
                 await self._task_queues[next_task.requirements].put(next_task)
         if fails >= ALLOWED_CONSUMER_FAILS:
             raise ActorListenBreaker(f"{fails} number of fails reached")
         return fails + 1
+
+    def _log(self, s, **kwargs):
+        if self._debug:
+            self._logger.info(s, **kwargs)
+
+    def _is_last(self, task: "SchedulerTask"):
+        return self._task_queues[task.requirements].size == 0
 
     @property
     def _wait_on_tasks(self):
@@ -467,8 +465,22 @@ class SchedulerTask:
         self.fail_count = 0
         self.future = None
 
+    def __repr__(self) -> str:
+        return (
+            f"Task: {self.argument}, "
+            "Requires: {self.requirements}, "
+            "Future: {self.future}"
+        )
+
     def init_future(self):
         self.future = asyncio.Future()
 
-    def set_future(self, value):
-        self.future.set_result(value)
+    def set_future(self, task_result):
+        self.future.set_result(task_result)
+
+
+@dataclass
+class TaskResult:
+    value: Any
+    is_ok: bool
+    is_last_in_queue: bool
