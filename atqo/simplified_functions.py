@@ -4,7 +4,7 @@ from multiprocessing import cpu_count
 
 from .bases import ActorBase
 from .core import Scheduler, SchedulerTask
-from .distributed_apis import DEFAULT_DIST_API_KEY
+from .distributed_apis import DEFAULT_MULTI_API
 from .resource_handling import Capability, CapabilitySet
 from .utils import partial_wrap
 
@@ -43,11 +43,11 @@ def get_simp_scheduler(n, fun, dist_sys, verbose) -> Scheduler:
 def parallel_map(
     fun,
     iterable,
-    dist_api=DEFAULT_DIST_API_KEY,
+    dist_api=DEFAULT_MULTI_API,
     batch_size=None,
     min_queue_size=None,
     workers=None,
-    raise_errors=False,
+    raise_errors=True,
     verbose=False,
     pbar=False,
 ):

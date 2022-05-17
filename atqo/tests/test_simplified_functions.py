@@ -33,7 +33,10 @@ def test_batch(fun, inl):
 
     map_outs = chain(
         *[
-            [parallel_map(fun, inl, dapi), parallel_map(fun, iter(inl), dapi)]
+            [
+                parallel_map(fun, inl, dapi, raise_errors=False),
+                parallel_map(fun, iter(inl), dapi, raise_errors=False),
+            ]
             for dapi in DIST_API_MAP.keys()
         ]
     )
@@ -58,5 +61,4 @@ def test_extras():
             [1, 2, 3, "X", "Y"],
             batch_size=3,
             pbar=True,
-            raise_errors=True,
         )
