@@ -16,6 +16,42 @@ if TYPE_CHECKING:
 logger = get_logger()
 
 
+class MPActorWrap(ActorBase):
+    def __init__(self, inner_actor_cls: Type["ActorBase"], man: mp.Manager):
+
+        self._in_q = man.Queue(maxsize=1)
+        self._out_q = man.Queue(maxsize=1)
+        self.pool = ProcessPoolExecutor(1)
+        self._actor_cls = inner_actor_cls
+        self.proc = self._get_proc()
+
+    def consume(self, task_arg):
+        self.pool.submit(self._in_q.put, task_arg)
+        return self.pool.submit(self._out_q.get)
+
+    def stop(self):
+        self.proc.kill()
+        self.proc.join()
+        self.pool.shutdown()
+
+    def _get_proc(self):
+        proc = mp.Process(
+            target=_work_mp_actor,
+            args=(self._actor_cls, self._in_q, self._out_q),
+        )
+        proc.start()
+        return proc
+
+
+class MPGCWrap(MPActorWrap):
+    def consume(self, task_arg):
+        self.proc.kill()
+        self.proc.join()
+        self.proc = self._get_proc()
+        self.pool.submit(self._in_q.put, task_arg)
+        return self.pool.submit(self._out_q.get)
+
+
 class RayAPI(DistAPIBase):
     def __init__(self):
         import ray
@@ -94,26 +130,10 @@ class MultiProcAPI(DistAPIBase):
         self.man.shutdown()
 
 
-class MPActorWrap(ActorBase):
-    def __init__(self, inner_actor_cls: Type["ActorBase"], man: mp.Manager):
-
-        self._in_q = man.Queue(maxsize=1)
-        self._out_q = man.Queue(maxsize=1)
-        self.pool = ProcessPoolExecutor(1)
-        self.proc = mp.Process(
-            target=_work_mp_actor,
-            args=(inner_actor_cls, self._in_q, self._out_q),
-        )
-        self.proc.start()
-
-    def consume(self, task_arg):
-        self.pool.submit(self._in_q.put, task_arg)
-        return self.pool.submit(self._out_q.get)
-
-    def stop(self):
-        self.proc.kill()
-        self.proc.join()
-        self.pool.shutdown()
+class MultiGcAPI(MultiProcAPI):
+    @staticmethod
+    def get_future(actor, next_task: "SchedulerTask") -> Future:
+        return asyncio.wrap_future(actor.consume(next_task.argument))
 
 
 def _work_mp_actor(actor_cls, in_q, out_q):  # pragma: no cover
@@ -129,10 +149,12 @@ def _work_mp_actor(actor_cls, in_q, out_q):  # pragma: no cover
 
 DEFAULT_DIST_API_KEY = "sync"
 DEFAULT_MULTI_API = "mp"
+MULTI_GC_API = "mp-gc"
 DIST_API_MAP = {
     DEFAULT_DIST_API_KEY: SyncAPI,
     "ray": RayAPI,
     DEFAULT_MULTI_API: MultiProcAPI,
+    MULTI_GC_API: MultiGcAPI,
 }
 
 
