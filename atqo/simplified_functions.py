@@ -31,7 +31,9 @@ class ActWrap(ActorBase):
         return self._f(task_arg)
 
 
-def get_simp_scheduler(n, fun, dist_sys, verbose) -> Scheduler:
+def get_simp_scheduler(n, fun, dist_sys, verbose, max_runs) -> Scheduler:
+    ActWrap.restart_after = max_runs
+
     return Scheduler(
         actor_dict={CapabilitySet([_CAP]): partial_wrap(ActWrap, fun=fun)},
         resource_limits={_RES: n},
@@ -50,6 +52,7 @@ def parallel_map(
     raise_errors=True,
     verbose=False,
     pbar=False,
+    restart_after=float("inf"),
 ):
     nw = workers or cpu_count()
     batch_size = batch_size or nw * 5
@@ -60,7 +63,7 @@ def parallel_map(
 
         iterable = tqdm(iterable)
 
-    scheduler = get_simp_scheduler(nw, fun, dist_api, verbose)
+    scheduler = get_simp_scheduler(nw, fun, dist_api, verbose, restart_after)
 
     out = []
     outmap = partial(_raiser, li=out) if raise_errors else out.append

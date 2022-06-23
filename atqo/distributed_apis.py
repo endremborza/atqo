@@ -97,6 +97,7 @@ class MultiProcAPI(DistAPIBase):
 class MPActorWrap(ActorBase):
     def __init__(self, inner_actor_cls: Type["ActorBase"], man: mp.Manager):
 
+        self._inner_actor = inner_actor_cls
         self._in_q = man.Queue(maxsize=1)
         self._out_q = man.Queue(maxsize=1)
         self.pool = ProcessPoolExecutor(1)
@@ -115,6 +116,10 @@ class MPActorWrap(ActorBase):
         self.proc.join()
         self.pool.shutdown()
 
+    @property
+    def restart_after(self):
+        return self._inner_actor.restart_after
+
 
 def _work_mp_actor(actor_cls, in_q, out_q):  # pragma: no cover
     actor = actor_cls()
@@ -131,7 +136,7 @@ DEFAULT_DIST_API_KEY = "sync"
 DEFAULT_MULTI_API = "mp"
 DIST_API_MAP = {
     DEFAULT_DIST_API_KEY: SyncAPI,
-    "ray": RayAPI,
+    # "ray": RayAPI,
     DEFAULT_MULTI_API: MultiProcAPI,
 }
 

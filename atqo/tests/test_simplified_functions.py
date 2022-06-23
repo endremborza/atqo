@@ -3,7 +3,7 @@ from itertools import chain, product
 import pytest
 
 from atqo import parallel_map
-from atqo.distributed_apis import DIST_API_MAP
+from atqo.distributed_apis import DEFAULT_MULTI_API, DIST_API_MAP
 
 
 def add2(x):
@@ -20,7 +20,7 @@ def div(x):
 
 @pytest.mark.parametrize(
     ["fun", "inl"],
-    product([add2, extstr, div], [[1, 2, 3, 4], ["a", 10, "b", 3], [None, 2, 0]]),
+    product([add2, extstr, div], [[1, 2, 3, 4, 5], ["a", 10, "b", 3], [None, 2, 0]]),
 )
 def test_batch(fun, inl):
     res = []
@@ -34,11 +34,21 @@ def test_batch(fun, inl):
     map_outs = chain(
         *[
             [
-                parallel_map(fun, inl, dapi, raise_errors=False),
+                parallel_map(fun, inl, dapi, raise_errors=False, verbose=True),
                 parallel_map(fun, iter(inl), dapi, raise_errors=False),
             ]
             for dapi in DIST_API_MAP.keys()
-        ]
+        ],
+        [
+            parallel_map(
+                fun,
+                inl,
+                DEFAULT_MULTI_API,
+                raise_errors=False,
+                restart_after=1,
+                verbose=True,
+            )
+        ],
     )
     for mout in map_outs:
         mres = []

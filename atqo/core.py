@@ -355,23 +355,20 @@ class ActorSet:
         self._log(
             "consumer listening",
             running=type(running_actor).__name__,
+            ra=running_actor.restart_after,
         )
         fails = 0
+        runs = 0
         while True:
             next_task = await self._get_next_task()
             try:
                 fails = await self._process_task(running_actor, next_task, fails)
+                runs += 1
             except ActorListenBreaker as e:
-                self._log(
-                    "stopping consumer",
-                    reason=e,
-                    running=type(running_actor).__name__,
-                )
-                self.dist_api.kill(running_actor)
-                del self._actor_listening_async_task_dict[name]
-                self._poisoning_done_future.set_result(True)
-                if not isinstance(e, ActorPoisoned):
-                    await self.add_new_actor()
+                await self._end_actor(running_actor, e, name)
+                return
+            if runs >= running_actor.restart_after:
+                await self._end_actor(running_actor, None, name)
                 return
 
     async def _get_next_task(self) -> "SchedulerTask":
@@ -413,6 +410,22 @@ class ActorSet:
         if fails >= ALLOWED_CONSUMER_FAILS:
             raise ActorListenBreaker(f"{fails} number of fails reached")
         return fails + 1
+
+    async def _end_actor(self, running_actor: "ActorBase", e, name):
+        self._log(
+            "stopping consumer",
+            reason=e,
+            running=type(running_actor).__name__,
+            ra=running_actor.restart_after,
+        )
+        self.dist_api.kill(running_actor)
+        del self._actor_listening_async_task_dict[name]
+        if not isinstance(e, ActorPoisoned):
+            self._log("restarting consumer")
+            await self.add_new_actor()
+        else:
+            self._poisoning_done_future.set_result(True)
+
 
     def _log(self, s, **kwargs):
         if self._debug:

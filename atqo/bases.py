@@ -23,6 +23,8 @@ class TaskPropertyBase:  # pragma: no cover
 
 
 class ActorBase(ABC):
+    restart_after = float("inf")
+
     @abstractmethod
     def consume(self, task_arg):
         pass  # pragma: no cover
