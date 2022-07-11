@@ -48,7 +48,7 @@ class DistAPIBase(ABC):
         pass
 
     @staticmethod
-    def kill(actor):
+    def kill(actor: ActorBase):
         actor.stop()
 
     @staticmethod
@@ -56,7 +56,7 @@ class DistAPIBase(ABC):
         return actor_cls()
 
     @staticmethod
-    def get_future(actor, next_task: "SchedulerTask") -> Future:
+    def get_future(actor: ActorBase, next_task: "SchedulerTask") -> Future:
         f = Future()
         f.set_result(actor.consume(next_task.argument))
         return f
