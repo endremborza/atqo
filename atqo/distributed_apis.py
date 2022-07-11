@@ -22,8 +22,8 @@ class MultiProcAPI(DistAPIBase):
     def __init__(self) -> None:
         self.man = mp.Manager()
 
-    def get_running_actor(self, actor_cls: Type["ActorBase"]) -> "ActorBase":
-        return MPActorWrap(actor_cls, self.man)
+    def get_running_actor(self, actor_cls, args, kwargs) -> "ActorBase":
+        return MPActorWrap(actor_cls, self.man, args, kwargs)
 
     @staticmethod
     def get_future(actor: ActorBase, next_task: "SchedulerTask") -> Future:
@@ -34,15 +34,15 @@ class MultiProcAPI(DistAPIBase):
 
 
 class MPActorWrap(ActorBase):
-    def __init__(self, inner_actor_cls: Type["ActorBase"], man: mp.Manager):
+    def __init__(self, actor_cls: Type["ActorBase"], man: mp.Manager, args, kwargs):
 
-        self._inner_actor = inner_actor_cls
+        self._inner_actor = actor_cls
         self._in_q = man.Queue(maxsize=1)
         self._out_q = man.Queue(maxsize=1)
         self.pool = ProcessPoolExecutor(1)
         self.proc = mp.Process(
             target=_work_mp_actor,
-            args=(inner_actor_cls, self._in_q, self._out_q),
+            args=(actor_cls, self._in_q, self._out_q, args, kwargs),
         )
         self.proc.start()
 
@@ -60,8 +60,8 @@ class MPActorWrap(ActorBase):
         return self._inner_actor.restart_after
 
 
-def _work_mp_actor(actor_cls, in_q, out_q):  # pragma: no cover
-    actor = actor_cls()
+def _work_mp_actor(actor_cls, in_q, out_q, args, kwargs):  # pragma: no cover
+    actor = actor_cls(*args, **kwargs)
     while True:
         arg = in_q.get()
         try:

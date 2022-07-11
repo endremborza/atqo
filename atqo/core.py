@@ -6,7 +6,7 @@ from enum import Enum
 from itertools import chain
 from queue import Empty, Queue
 from threading import Thread
-from typing import Any, Callable, Dict, Iterable, List, Type
+from typing import Any, Callable, Dict, Iterable, List, Type, Union
 
 from structlog import get_logger
 
@@ -15,6 +15,7 @@ from .distributed_apis import DEFAULT_DIST_API_KEY, get_dist_api
 from .exceptions import ActorListenBreaker, ActorPoisoned, NotEnoughResourcesToContinue
 from .exchange import CapsetExchange
 from .resource_handling import Capability, CapabilitySet, NumStore
+from .utils import ArgRunner
 
 POISON_KEY = frozenset([])  # just make sure it comes before any other
 POISON_PILL = None
@@ -35,7 +36,7 @@ def _get_loop_of_daemon():
 class Scheduler:
     def __init__(
         self,
-        actor_dict: Dict[CapabilitySet, Type["ActorBase"]],
+        actor_dict: Dict[CapabilitySet, Union[Type["ActorBase"], ArgRunner]],
         resource_limits: Dict[Enum, float],
         distributed_system: str = DEFAULT_DIST_API_KEY,
         verbose=False,
@@ -49,7 +50,8 @@ class Scheduler:
 
         """
         for _, v in actor_dict.items():
-            assert ActorBase in v.mro()
+            _ab = v.kls if isinstance(v, ArgRunner) else v
+            assert ActorBase in _ab.mro()
 
         self._result_queue = Queue()
         self._active_async_tasks = set()
@@ -158,16 +160,21 @@ class Scheduler:
         return new_task_queue
 
     async def _add_actor_sets(self, actor_dict):
-        self._actor_sets = {
-            capset: ActorSet(
-                actor_cls,
+        for capset, dic_val in actor_dict.items():
+            if isinstance(dic_val, ArgRunner):
+                arg_runner = dic_val
+            else:
+                arg_runner = ArgRunner(dic_val)
+
+            self._actor_sets[capset] = ActorSet(
+                arg_runner.kls,
                 self._dist_api,
                 capset,
                 self._task_queues,
                 self._verbose,
+                arg_runner.args,
+                arg_runner.kwargs,
             )
-            for capset, actor_cls in actor_dict.items()
-        }
 
     async def _refill_task_queue(self, task_batch: Iterable["SchedulerTask"]):
         for scheduler_task in task_batch:
@@ -296,10 +303,14 @@ class ActorSet:
         capset: CapabilitySet,
         task_queues: Dict[CapabilitySet, TaskQueue],
         debug: bool,
+        actor_args: tuple,
+        actor_kwargs: dict,
     ) -> None:
         self.actor_cls = actor_cls
         self.dist_api = dist_api
         self.capset = capset
+        self.actor_args = actor_args
+        self.actor_kwargs = actor_kwargs
 
         self.poison_queue = TaskQueue()
         self._poisoning_done_future = asyncio.Future()
@@ -328,7 +339,9 @@ class ActorSet:
         return n
 
     async def add_new_actor(self):
-        running_actor = self.dist_api.get_running_actor(actor_cls=self.actor_cls)
+        running_actor = self.dist_api.get_running_actor(
+            actor_cls=self.actor_cls, args=self.actor_args, kwargs=self.actor_kwargs
+        )
         listener_name = uuid.uuid1().hex
         coroutine = self._listen(
             running_actor=running_actor,

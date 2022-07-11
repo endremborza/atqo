@@ -1,5 +1,17 @@
-from functools import partial, partialmethod
+from dataclasses import dataclass, field
+from functools import partial
 from operator import add, sub
+from typing import Any
+
+
+@dataclass
+class ArgRunner:
+    kls: type
+    args: tuple = ()
+    kwargs: dict = field(default_factory=dict)
+
+    def __call__(self, *args: Any, **kwds: Any) -> Any:
+        return self.kls(*args, *self.args, **kwds, **self.kwargs)
 
 
 def dic_merge(d1, d2, _def, fun):
@@ -7,11 +19,7 @@ def dic_merge(d1, d2, _def, fun):
 
 
 def partial_cls(cls: type, *args, **kwargs):
-    _dict = {
-        k: (v if k != "__init__" else partialmethod(v, *args, **kwargs))
-        for k, v in cls.__dict__.items()
-    }
-    return type(cls.__name__, cls.__bases__, _dict)
+    return ArgRunner(cls, args, kwargs)
 
 
 sumdict = partial(dic_merge, _def=0, fun=add)

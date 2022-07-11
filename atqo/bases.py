@@ -52,8 +52,8 @@ class DistAPIBase(ABC):
         actor.stop()
 
     @staticmethod
-    def get_running_actor(actor_cls: Type["ActorBase"]) -> ActorBase:
-        return actor_cls()
+    def get_running_actor(actor_cls: Type["ActorBase"], args, kwargs) -> ActorBase:
+        return actor_cls(*args, **kwargs)
 
     @staticmethod
     def get_future(actor: ActorBase, next_task: "SchedulerTask") -> Future:
