@@ -6,19 +6,15 @@ from enum import Enum
 from itertools import chain
 from queue import Empty, Queue
 from threading import Thread
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Type
+from typing import Any, Callable, Dict, Iterable, List, Type
 
 from structlog import get_logger
 
-from .bases import TaskPropertyBase
+from .bases import ActorBase, DistAPIBase, TaskPropertyBase
 from .distributed_apis import DEFAULT_DIST_API_KEY, get_dist_api
 from .exceptions import ActorListenBreaker, ActorPoisoned, NotEnoughResourcesToContinue
 from .exchange import CapsetExchange
 from .resource_handling import Capability, CapabilitySet, NumStore
-
-if TYPE_CHECKING:
-    from .bases import ActorBase, DistAPIBase  # pragma: no cover
-
 
 POISON_KEY = frozenset([])  # just make sure it comes before any other
 POISON_PILL = None
@@ -52,6 +48,8 @@ class Scheduler:
           -
 
         """
+        for _, v in actor_dict.items():
+            assert ActorBase in v.mro()
 
         self._result_queue = Queue()
         self._active_async_tasks = set()
@@ -89,7 +87,8 @@ class Scheduler:
             next_batch = batch_producer()
             batch_size = len(next_batch)
             empty_batch = batch_size == 0
-            self._log("new batch", size=batch_size, was_done=is_done)
+            logstr = f"{'empty' if empty_batch else 'new'} batch"
+            self._log(logstr, size=batch_size, was_done=is_done)
             if is_done and empty_batch:
                 break
             if empty_batch:
@@ -352,6 +351,7 @@ class ActorSet:
         return self._actor_listening_async_task_dict.values()
 
     async def _listen(self, running_actor: "ActorBase", name: str):
+        # WARNING: if error happens here, it will get swallowed to the abyss
         self._log(
             "consumer listening",
             running=type(running_actor).__name__,
@@ -426,7 +426,6 @@ class ActorSet:
         else:
             self._poisoning_done_future.set_result(True)
 
-
     def _log(self, s, **kwargs):
         if self._debug:
             self._logger.info(s, **kwargs)
@@ -481,8 +480,8 @@ class SchedulerTask:
     def __repr__(self) -> str:
         return (
             f"Task: {self.argument}, "
-            "Requires: {self.requirements}, "
-            "Future: {self.future}"
+            f"Requires: {self.requirements}, "
+            f"Future: {self.future}"
         )
 
     def init_future(self):
