@@ -20,7 +20,6 @@ doc = [
     "jupyter",
     "toml"
 ]
-ray = ["ray"]
 fancy = ["tqdm", "filelock"]
 [project.urls]
 Homepage = "https://github.com/endremborza/atqo"
