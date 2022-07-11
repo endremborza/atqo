@@ -1,9 +1,7 @@
 import asyncio
-import logging
 import multiprocessing as mp
 from asyncio import Future
 from concurrent.futures import ProcessPoolExecutor
-from functools import partial, partialmethod
 from typing import TYPE_CHECKING, Type
 
 from structlog import get_logger
@@ -14,65 +12,6 @@ if TYPE_CHECKING:
     from .core import SchedulerTask  # pragma: no cover
 
 logger = get_logger()
-
-
-class RayAPI(DistAPIBase):
-    def __init__(self):
-        import ray
-        from ray.exceptions import RayError, RayTaskError
-
-        self._exc_cls = RayError
-        self._task_exc = RayTaskError
-        self._ray_module = ray
-
-        ray_specs = ray.init(
-            # resources=_limitset_to_ray_init(limit_set),
-            log_to_driver=False,
-            logging_level=logging.WARNING,
-        )
-        logger.info(f"ray dashboard: http://{ray_specs.get('webui_url')}")
-        logger.info("launched ray with resources", **ray.cluster_resources())
-        self._running = True
-
-    @property
-    def exception(self):
-        return self._exc_cls
-
-    def join(self):
-        if self._running:
-            self._ray_module.shutdown()
-            self._running = False
-
-    def kill(self, actor):
-        self._ray_module.wait([actor.stop.remote()])
-        self._ray_module.kill(actor)
-
-    def get_running_actor(self, actor_cls: Type["ActorBase"]) -> "ActorBase":
-
-        # ray should get the resources here...
-        # not working with partial :
-        if isinstance(actor_cls, partial):
-            assert not actor_cls.args, "only kwargs in partials"
-            root_cls = actor_cls.func
-            actor_cls = type(
-                root_cls.__name__,
-                (ActorBase,),
-                {
-                    k: (
-                        v if k != "__init__" else partialmethod(v, **actor_cls.keywords)
-                    )
-                    for k, v in root_cls.__dict__.items()
-                },
-            )
-
-        return self._ray_module.remote(actor_cls).remote()
-
-    @staticmethod
-    def get_future(actor, next_task: "SchedulerTask") -> Future:
-        return asyncio.wrap_future(actor.consume.remote(next_task.argument).future())
-
-    def parse_exception(self, e):
-        return e.cause if isinstance(e, self._task_exc) else e
 
 
 class SyncAPI(DistAPIBase):
@@ -87,7 +26,7 @@ class MultiProcAPI(DistAPIBase):
         return MPActorWrap(actor_cls, self.man)
 
     @staticmethod
-    def get_future(actor, next_task: "SchedulerTask") -> Future:
+    def get_future(actor: ActorBase, next_task: "SchedulerTask") -> Future:
         return asyncio.wrap_future(actor.consume(next_task.argument))
 
     def join(self):
@@ -134,11 +73,7 @@ def _work_mp_actor(actor_cls, in_q, out_q):  # pragma: no cover
 
 DEFAULT_DIST_API_KEY = "sync"
 DEFAULT_MULTI_API = "mp"
-DIST_API_MAP = {
-    DEFAULT_DIST_API_KEY: SyncAPI,
-    # "ray": RayAPI,
-    DEFAULT_MULTI_API: MultiProcAPI,
-}
+DIST_API_MAP = {DEFAULT_DIST_API_KEY: SyncAPI, DEFAULT_MULTI_API: MultiProcAPI}
 
 
 def get_dist_api(key) -> "DistAPIBase":
