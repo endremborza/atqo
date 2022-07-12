@@ -40,11 +40,15 @@ class MPActorWrap(ActorBase):
         self._in_q = man.Queue(maxsize=1)
         self._out_q = man.Queue(maxsize=1)
         self.pool = ProcessPoolExecutor(1)
+        _setup_q = mp.Queue()
         self.proc = mp.Process(
             target=_work_mp_actor,
-            args=(actor_cls, self._in_q, self._out_q, args, kwargs),
+            args=(actor_cls, self._in_q, self._out_q, _setup_q, args, kwargs),
         )
         self.proc.start()
+        res = _setup_q.get()
+        if isinstance(res, Exception):
+            raise res
 
     def consume(self, task_arg):
         self.pool.submit(self._in_q.put, task_arg)
@@ -60,8 +64,13 @@ class MPActorWrap(ActorBase):
         return self._inner_actor.restart_after
 
 
-def _work_mp_actor(actor_cls, in_q, out_q, args, kwargs):  # pragma: no cover
-    actor = actor_cls(*args, **kwargs)
+def _work_mp_actor(actor_cls, in_q, out_q, setup_q, args, kwargs):  # pragma: no cover
+    try:
+        actor = actor_cls(*args, **kwargs)
+    except Exception as e:
+        setup_q.put(e)
+        return
+    setup_q.put(0)
     while True:
         arg = in_q.get()
         try:
