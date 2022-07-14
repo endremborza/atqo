@@ -15,7 +15,7 @@ from .distributed_apis import DEFAULT_DIST_API_KEY, get_dist_api
 from .exceptions import ActorListenBreaker, ActorPoisoned, NotEnoughResourcesToContinue
 from .exchange import CapsetExchange
 from .resource_handling import Capability, CapabilitySet, NumStore
-from .utils import ArgRunner
+from .utils import ArgRunner, dic_val_filt
 
 POISON_KEY = frozenset([])  # just make sure it comes before any other
 POISON_PILL = None
@@ -57,6 +57,7 @@ class Scheduler:
         self._active_async_tasks = set()
         self._task_queues: Dict[CapabilitySet, TaskQueue] = {}
         self._loop = _get_loop_of_daemon()
+        self._reorg_lock = asyncio.Lock()
 
         self._verbose = verbose
         self._dist_api: DistAPIBase = get_dist_api(distributed_system)()
@@ -104,6 +105,7 @@ class Scheduler:
                 break
 
     def refill_task_queue(self, task_batch: Iterable["SchedulerTask"]):
+        # invalid state error is raised if future is already set on task
         self._run(self._refill_task_queue(task_batch))
 
     def wait_until_n_tasks_remain(self, remaining_tasks: int = 0):
@@ -210,23 +212,25 @@ class Scheduler:
         value of adding: decrease caused in  target / number possible remaining
 
         """
-        need_dic = {cs: t.size for cs, t in self._task_queues.items()}
-        new_needs = NumStore(need_dic)
-        new_ideals = self._capset_exchange.set_values(new_needs)
-        self._log(f"reorganizing on {need_dic}")
-        self._log(f"reorganizing to {new_ideals}")
+        async with self._reorg_lock:
+            need_dic = {cs: t.size for cs, t in self._task_queues.items()}
+            new_needs = NumStore(need_dic)
+            new_ideals = self._capset_exchange.set_values(new_needs)
+            curr = {c: a.running_actor_count for c, a in self._actor_sets.items()}
+            for pref, dic in [("on", need_dic), ("from", curr), ("to", new_ideals)]:
+                self._log(f"reorganizing {pref} {dic_val_filt(dic)}")
 
-        for cs, new_ideal in new_ideals.items():
-            await self._actor_sets[cs].set_running_actors_to(new_ideal)
+            for cs, new_ideal in new_ideals.items():
+                await self._actor_sets[cs].set_running_actors_to(new_ideal)
 
-        dead_end = self.queued_task_count and self._capset_exchange.idle
+            dead_end = self.queued_task_count and self._capset_exchange.idle
 
-        if dead_end:
-            await self._cleanup()
-            await self._cancel_remaining_tasks()
-            raise NotEnoughResourcesToContinue(
-                f"{self.queued_task_count} remaining and no launchable actors"
-            )
+            if dead_end:
+                await self._cleanup()
+                await self._cancel_remaining_tasks()
+                raise NotEnoughResourcesToContinue(
+                    f"{self.queued_task_count} remaining and no launchable actors"
+                )
 
     async def _await_until(self, remaining_tasks: int = 0):
         return_when = "FIRST_COMPLETED" if remaining_tasks > 0 else "ALL_COMPLETED"
@@ -410,7 +414,7 @@ class ActorSet:
             next_task.set_future(result)
             return 0
         except self.dist_api.exception as e:
-            self._log("Remote consumption error ", e=e, te=type(e))
+            self._log("Remote consumption error ", e=e, te=type(e), task=next_task)
             if self._debug:
                 self._logger.exception(e)
             next_task.fail_count += 1

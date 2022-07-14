@@ -22,5 +22,9 @@ def partial_cls(cls: type, *args, **kwargs):
     return ArgRunner(cls, args, kwargs)
 
 
+def dic_val_filt(dic):
+    return {k: v for k, v in dic.items() if v}
+
+
 sumdict = partial(dic_merge, _def=0, fun=add)
 subdict = partial(dic_merge, _def=0, fun=sub)
