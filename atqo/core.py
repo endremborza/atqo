@@ -12,7 +12,12 @@ from structlog import get_logger
 
 from .bases import ActorBase, DistAPIBase, TaskPropertyBase
 from .distributed_apis import DEFAULT_DIST_API_KEY, get_dist_api
-from .exceptions import ActorListenBreaker, ActorPoisoned, NotEnoughResourcesToContinue
+from .exceptions import (
+    ActorListenBreaker,
+    ActorPoisoned,
+    DistantException,
+    NotEnoughResourcesToContinue,
+)
 from .exchange import CapsetExchange
 from .resource_handling import Capability, CapabilitySet, NumStore
 from .utils import ArgRunner, dic_val_filt
@@ -409,6 +414,8 @@ class ActorSet:
         try:
             out = await self.dist_api.get_future(running_actor, next_task)
             if isinstance(out, Exception):
+                if isinstance(out, DistantException):
+                    out = out.e.with_traceback(out.tb.as_traceback())
                 raise out
             result = TaskResult(out, True, self._is_last(next_task))
             next_task.set_future(result)

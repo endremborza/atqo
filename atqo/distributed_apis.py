@@ -2,11 +2,14 @@ import asyncio
 import multiprocessing as mp
 from asyncio import Future
 from concurrent.futures import ProcessPoolExecutor
+from multiprocessing.managers import SyncManager
 from typing import TYPE_CHECKING, Type
 
 from structlog import get_logger
+from tblib import Traceback
 
 from .bases import ActorBase, DistAPIBase
+from .exceptions import DistantException
 
 if TYPE_CHECKING:
     from .core import SchedulerTask  # pragma: no cover
@@ -34,7 +37,7 @@ class MultiProcAPI(DistAPIBase):
 
 
 class MPActorWrap(ActorBase):
-    def __init__(self, actor_cls: Type["ActorBase"], man: mp.Manager, args, kwargs):
+    def __init__(self, actor_cls: Type["ActorBase"], man: SyncManager, args, kwargs):
 
         self._inner_actor = actor_cls
         self._in_q = man.Queue(maxsize=1)
@@ -76,7 +79,7 @@ def _work_mp_actor(actor_cls, in_q, out_q, setup_q, args, kwargs):  # pragma: no
         try:
             res = actor.consume(arg)
         except Exception as e:
-            res = e
+            res = DistantException(e, Traceback(e.__traceback__))
         out_q.put(res)
 
 
