@@ -62,11 +62,7 @@ class Scheduler:
         self._active_async_tasks = set()
         self._task_queues: Dict[CapabilitySet, TaskQueue] = {}
         self._loop = _get_loop_of_daemon()
-        try:
-            self._reorg_lock = asyncio.Lock(loop=self._loop)
-        except TypeError:
-            # 3.10 removed the loop kw
-            self._reorg_lock = asyncio.Lock()
+        self._reorg_lock = asyncio.Lock()
 
         self._verbose = verbose
         self._dist_api: DistAPIBase = get_dist_api(distributed_system)()
