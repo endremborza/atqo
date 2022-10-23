@@ -66,18 +66,16 @@ class MPActorWrap(ActorBase):
         self._out_q = man.Queue(maxsize=1)
         self.pool = ProcessPoolExecutor(1)
         _setup_q = mp.Queue()
-        self.proc = mp.Process(
-            target=_work_mp_actor,
-            args=(
-                actor_cls,
-                self._in_q,
-                self._out_q,
-                _setup_q,
-                store,
-                args,
-                kwargs,
-            ),
+        _args = (
+            actor_cls,
+            self._in_q,
+            self._out_q,
+            _setup_q,
+            store,
+            args,
+            kwargs,
         )
+        self.proc = mp.Process(target=_work_mp_actor, args=_args)
         self.proc.start()
         res = _setup_q.get()
         if isinstance(res, Exception):
