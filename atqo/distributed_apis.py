@@ -3,6 +3,7 @@ import multiprocessing as mp
 from asyncio import Future
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing.managers import SyncManager
+from threading import Thread
 from typing import TYPE_CHECKING, Type
 
 from structlog import get_logger
@@ -10,6 +11,7 @@ from tblib import Traceback
 
 from .bases import ActorBase, DistAPIBase
 from .exceptions import DistantException
+from .lock_stores import MpLockStore, ThreadLockStore
 
 if TYPE_CHECKING:
     from .core import SchedulerTask  # pragma: no cover
@@ -23,21 +25,41 @@ class SyncAPI(DistAPIBase):
 
 class MultiProcAPI(DistAPIBase):
     def __init__(self) -> None:
+        mp.set_start_method("spawn", force=True)
         self.man = mp.Manager()
+        self._lock_queue = self.man.Queue(1)
+        self._store = MpLockStore(self.man.Lock(), self.man.dict(), self._lock_queue)
+        self._filler = Thread(target=self._fill_lock_q, name="filler")
+        self._filler.start()
 
     def get_running_actor(self, actor_cls, args, kwargs) -> "ActorBase":
-        return MPActorWrap(actor_cls, self.man, args, kwargs)
+        return MPActorWrap(actor_cls, self.man, self._store, args, kwargs)
 
     @staticmethod
     def get_future(actor: ActorBase, next_task: "SchedulerTask") -> Future:
         return asyncio.wrap_future(actor.consume(next_task.argument))
 
     def join(self):
+        self._filler.join(timeout=0)
         self.man.shutdown()
+
+    def _fill_lock_q(self):
+        try:
+            while True:
+                self._lock_queue.put(self.man.Lock())
+        except EOFError:
+            pass
 
 
 class MPActorWrap(ActorBase):
-    def __init__(self, actor_cls: Type["ActorBase"], man: SyncManager, args, kwargs):
+    def __init__(
+        self,
+        actor_cls: Type["ActorBase"],
+        man: SyncManager,
+        store,
+        args,
+        kwargs,
+    ):
 
         self._inner_actor = actor_cls
         self._in_q = man.Queue(maxsize=1)
@@ -46,7 +68,15 @@ class MPActorWrap(ActorBase):
         _setup_q = mp.Queue()
         self.proc = mp.Process(
             target=_work_mp_actor,
-            args=(actor_cls, self._in_q, self._out_q, _setup_q, args, kwargs),
+            args=(
+                actor_cls,
+                self._in_q,
+                self._out_q,
+                _setup_q,
+                store,
+                args,
+                kwargs,
+            ),
         )
         self.proc.start()
         res = _setup_q.get()
@@ -67,7 +97,12 @@ class MPActorWrap(ActorBase):
         return self._inner_actor.restart_after
 
 
-def _work_mp_actor(actor_cls, in_q, out_q, setup_q, args, kwargs):  # pragma: no cover
+def _work_mp_actor(
+    actor_cls, in_q, out_q, setup_q, store, args, kwargs
+):  # pragma: no cover
+
+    global _GLOBAL_LOCK_STORE
+    _GLOBAL_LOCK_STORE = store
     try:
         actor = actor_cls(*args, **kwargs)
     except Exception as e:
@@ -86,6 +121,21 @@ def _work_mp_actor(actor_cls, in_q, out_q, setup_q, args, kwargs):  # pragma: no
 DEFAULT_DIST_API_KEY = "sync"
 DEFAULT_MULTI_API = "mp"
 DIST_API_MAP = {DEFAULT_DIST_API_KEY: SyncAPI, DEFAULT_MULTI_API: MultiProcAPI}
+
+try:
+    _GLOBAL_LOCK_STORE
+except NameError:
+    _GLOBAL_LOCK_STORE = ThreadLockStore()
+
+
+def get_lock(lock_id):
+    return _GLOBAL_LOCK_STORE.get(lock_id)
+
+
+def acquire_lock(lock_id):
+    lock = get_lock(lock_id)
+    lock.acquire()
+    return lock
 
 
 def get_dist_api(key) -> "DistAPIBase":

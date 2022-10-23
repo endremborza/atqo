@@ -1,17 +1,14 @@
 from abc import abstractmethod
+from collections import defaultdict
 from pathlib import Path
+from queue import Queue
 from tempfile import TemporaryDirectory
 from threading import Lock
-from typing import Optional
 
 SEPARATOR = "://"
 
 
 class LockStoreBase:
-    @abstractmethod
-    def __init__(self, initstr: str) -> None:
-        pass  # pragma: no cover
-
     def acquire(self, key) -> Lock:
         lock = self.get(key)
         lock.acquire()
@@ -22,14 +19,39 @@ class LockStoreBase:
         pass  # pragma: no cover
 
 
+class ThreadLockStore(LockStoreBase):
+    def __init__(self) -> None:
+        self._locks = defaultdict(Lock)
+
+    def get(self, key: str) -> Lock:
+        return self._locks[key]
+
+
+class MpLockStore(ThreadLockStore):
+    def __init__(self, main_lock: Lock, lock_dict: dict, lock_queue: Queue) -> None:
+        self._main_lock = main_lock
+        self._locks = lock_dict
+        self._lock_queue = lock_queue
+
+    def get(self, key: str):
+        self._main_lock.acquire()
+        try:
+            out = self._locks[key]
+        except KeyError:
+            out = self._lock_queue.get()
+            self._locks[key] = out
+        finally:
+            self._main_lock.release()
+        return out
+
+
 class FileLockStore(LockStoreBase):
-    def __init__(self, initstr: str) -> None:
+    def __init__(self, root: str = None) -> None:
 
-        from filelock import FileLock
+        from portalocker import Lock
 
-        self._lock_cls = FileLock
-
-        self.root = initstr or TemporaryDirectory().name
+        self._lock_cls = Lock
+        self.root = root or TemporaryDirectory().name
 
     def get(self, key) -> Lock:
         return self._lock_cls(self._get_path(key))
@@ -42,34 +64,3 @@ class FileLockStore(LockStoreBase):
         path = Path(self.root, subpath).with_suffix(".lock")
         path.parent.mkdir(exist_ok=True, parents=True)
         return path
-
-
-STORE_DICT = {
-    # "local": ThreadLockStore,
-    # "redis": RedisLockStore,
-    # "dask": DaskLockStore,
-    "file": FileLockStore,
-}
-
-DEFAULT_STORE_STR = [*STORE_DICT.keys()][-1] + SEPARATOR
-
-
-def get_lock_store(store_str: Optional[str] = None) -> LockStoreBase:
-    f"""get a lock store based on a string
-
-    Parameters
-    ----------
-    store_str : str
-       {', '.join([f'{k}{SEPARATOR}initstr' for k in STORE_DICT.keys()])}
-
-    where initstr is passed to the matching LockStore:
-
-    {STORE_DICT}
-
-    Returns
-    -------
-    LockStoreBase
-        one of {[*STORE_DICT.values()]}
-    """
-    prefix, initstr = (store_str or DEFAULT_STORE_STR).split(SEPARATOR)
-    return STORE_DICT[prefix](initstr)
