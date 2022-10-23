@@ -33,7 +33,7 @@ class MpLockStore(ThreadLockStore):
         self._locks = lock_dict
         self._lock_queue = lock_queue
 
-    def get(self, key: str):
+    def get(self, key: str) -> Lock:
         self._main_lock.acquire()
         try:
             out = self._locks[key]
