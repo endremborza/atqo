@@ -29,7 +29,7 @@ class MultiProcAPI(DistAPIBase):
         self.man = mp.Manager()
         self._lock_queue = self.man.Queue(1)
         self._store = MpLockStore(self.man.Lock(), self.man.dict(), self._lock_queue)
-        self._filler = Thread(target=self._fill_lock_q, name="filler")
+        self._filler = Thread(target=self._fill_lock_q, name="filler", daemon=True)
         self._filler.start()
 
     def get_running_actor(self, actor_cls, args, kwargs) -> "ActorBase":
@@ -40,14 +40,15 @@ class MultiProcAPI(DistAPIBase):
         return asyncio.wrap_future(actor.consume(next_task.argument))
 
     def join(self):
-        self._filler.join(timeout=0)
         self.man.shutdown()
+        self._filler.join(timeout=0)
 
     def _fill_lock_q(self):
         try:
             while True:
-                self._lock_queue.put(self.man.Lock())
-        except EOFError:
+                _lock = self.man.Lock()
+                self._lock_queue.put(_lock)
+        except (EOFError, ConnectionResetError, BrokenPipeError):
             pass
 
 
