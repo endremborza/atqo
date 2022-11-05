@@ -48,7 +48,7 @@ class MultiProcAPI(DistAPIBase):
             while True:
                 _lock = self.man.Lock()
                 self._lock_queue.put(_lock)
-        except (EOFError, ConnectionResetError, BrokenPipeError):
+        except (EOFError, ConnectionResetError, BrokenPipeError, FileNotFoundError):
             pass
 
 
