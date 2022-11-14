@@ -222,7 +222,7 @@ class Scheduler:
             new_needs = NumStore(need_dic)
             new_ideals = self._capset_exchange.set_values(new_needs)
             curr = {c: a.running_actor_count for c, a in self._actor_sets.items()}
-            for pref, dic in [("on", need_dic), ("from", curr), ("to", new_ideals)]:
+            for pref, dic in [("need", need_dic), ("from", curr), ("to", new_ideals)]:
                 self._log(f"reorganizing {pref} {dic_val_filt(dic)}")
 
             for cs, new_ideal in new_ideals.items():
@@ -231,6 +231,7 @@ class Scheduler:
             dead_end = self.queued_task_count and self._capset_exchange.idle
 
             if dead_end:
+                # TODO: can be stuck here sometimes somehow :(
                 await self._cleanup()
                 await self._cancel_remaining_tasks()
                 raise NotEnoughResourcesToContinue(

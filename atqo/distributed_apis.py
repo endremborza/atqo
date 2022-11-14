@@ -83,8 +83,7 @@ class MPActorWrap(ActorBase):
             raise res
 
     def consume(self, task_arg):
-        self.pool.submit(self._in_q.put, task_arg)
-        return self.pool.submit(self._out_q.get)
+        return self.pool.submit(_add_task_mp, task_arg, self._in_q, self._out_q)
 
     def stop(self):
         self.proc.kill()
@@ -115,6 +114,11 @@ def _work_mp_actor(
         except Exception as e:
             res = DistantException(e, Traceback(e.__traceback__))
         out_q.put(res)
+
+
+def _add_task_mp(task_arg, in_q: mp.Queue, out_q: mp.Queue):
+    in_q.put(task_arg)
+    return out_q.get()
 
 
 DEFAULT_DIST_API_KEY = "sync"
