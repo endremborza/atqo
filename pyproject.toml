@@ -6,21 +6,11 @@ license = {file = "LICENSE"}
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["structlog", "tblib"]
-
 [project.optional-dependencies]
 test = ["branthebuilder"]
-doc = [
-    "sphinx",
-    "pandoc",
-    "graphviz",
-    "sphinx-automodapi",
-    "sphinx-rtd-theme",
-    "myst-parser",
-    "pygments",
-    "jupyter",
-    "toml"
-]
 fancy = ["tqdm", "portalocker"]
+doc = ["branthebuilder[doc]"]
+
 [project.urls]
 Homepage = "https://github.com/endremborza/atqo"
 
