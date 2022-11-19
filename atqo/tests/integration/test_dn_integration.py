@@ -65,8 +65,8 @@ class _Producer:
             return []
 
 
-@pytest.mark.parametrize("dist_sys", [*DIST_API_MAP.keys(), "wrong"])
-def xtest_minor_integration(dist_sys):
+@pytest.mark.parametrize("dist_sys", ["sync"])  # DIST_API_MAP.keys()
+def test_minor_integration(dist_sys):
 
     scheduler = Scheduler(
         actor_dict=actor_dict,
@@ -74,7 +74,6 @@ def xtest_minor_integration(dist_sys):
         distributed_system=dist_sys,
         verbose=True,
     )
-
     tasks = [
         SchedulerTask("small file", requirements=[file_uploader]),
         SchedulerTask("bigger file", requirements=[file_uploader, bigfile_handling]),
