@@ -44,11 +44,7 @@ def test_para_io(tmp_path, size, nfiles, dkey):
     args = [*product(data_files, range(size))]
     rng.shuffle(args)
 
-    parallel_map(
-        write,
-        map(IoArg.from_args, args),
-        dkey,
-    )
+    list(parallel_map(write, map(IoArg.from_args, args), dkey))
 
     for fp in data_files:
         assert int(fp.read_text()) == sum(range(size))

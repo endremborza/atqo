@@ -1,43 +1,45 @@
 import time
 
+import pytest
+
 from atqo.bases import ActorBase
 from atqo.core import Scheduler, SchedulerTask
 from atqo.distributed_apis import DEFAULT_MULTI_API
 from atqo.resource_handling import Capability, CapabilitySet
-from atqo.utils import ArgRunner
 
 
 class Actor(ActorBase):
-    def __init__(self) -> None:
+    def __init__(self) -> None:  # pragma: no cover
         self.e = 1
 
-    def consume(self, task_arg):
+    def consume(self, task_arg):  # pragma: no cover
         return self.e + task_arg
 
 
 class ActorSlow(Actor):
-    def __init__(self) -> None:
+    def __init__(self) -> None:  # pragma: no cover
         time.sleep(0.5)
         self.e = 20
 
 
-def test_runoff():
+cap1 = Capability({"A": 1})
+cap2 = Capability({"B": 1})
 
-    cap1 = Capability({"A": 1})
-    cap2 = Capability({"B": 1})
 
-    out = []
-
-    scheduler = Scheduler(
+@pytest.fixture
+def test_scheduler():
+    return Scheduler(
         actor_dict={
-            CapabilitySet([cap1]): ArgRunner(Actor),
-            CapabilitySet([cap2]): ArgRunner(ActorSlow),
+            CapabilitySet([cap1]): Actor,
+            CapabilitySet([cap2]): ActorSlow,
         },
         resource_limits={"A": 3, "B": 2},
         distributed_system=DEFAULT_MULTI_API,
         verbose=True,
     )
 
+
+def test_runoff(test_scheduler: Scheduler):
     def _get_st(cap, n):
         return [SchedulerTask(i, [cap]) for i in range(n)]
 
@@ -57,29 +59,18 @@ def test_runoff():
                 return []
             return self._batches[self.i]
 
-    scheduler.process(_BP(), lambda l: [out.append(e) for e in l], min_queue_size=5)
-
+    out = list(test_scheduler.process(_BP(), min_queue_size=5))
+    test_scheduler.join()
     assert len(out) == 28
 
 
-def test_slow_start():
-
-    cap1 = Capability({"A": 1})
-    cap2 = Capability({"A": 1, "B": 1})
-
-    scheduler = Scheduler(
-        actor_dict={
-            CapabilitySet([cap1]): ArgRunner(Actor),
-            CapabilitySet([cap2]): ArgRunner(ActorSlow),
-        },
-        resource_limits={"A": 3, "B": 2},
-        distributed_system=DEFAULT_MULTI_API,
-        verbose=True,
-    )
+def test_slow_start(test_scheduler: Scheduler):
 
     rtasks = [SchedulerTask(i, [cap1]) for i in range(10)]
     stasks = [SchedulerTask(i, [cap2]) for i in range(2)]
 
-    scheduler.refill_task_queue(rtasks + stasks)
-    scheduler.join()
-    assert sorted(scheduler.get_processed_results()) == [*range(1, 11), *range(20, 22)]
+    test_scheduler.refill_task_queue(rtasks + stasks)
+    assert sorted(test_scheduler.join()) == [
+        *range(1, 11),
+        *range(20, 22),
+    ]

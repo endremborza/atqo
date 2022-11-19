@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from asyncio import Future
 from functools import cached_property
-from typing import TYPE_CHECKING, Type
+from typing import TYPE_CHECKING
 
 from structlog import get_logger
 
@@ -23,8 +23,6 @@ class TaskPropertyBase:  # pragma: no cover
 
 
 class ActorBase(ABC):
-    restart_after = float("inf")
-
     @abstractmethod
     def consume(self, task_arg):
         pass  # pragma: no cover
@@ -52,8 +50,8 @@ class DistAPIBase(ABC):
         actor.stop()
 
     @staticmethod
-    def get_running_actor(actor_cls: Type["ActorBase"], args, kwargs) -> ActorBase:
-        return actor_cls(*args, **kwargs)
+    def get_running_actor(actor_creator) -> ActorBase:
+        return actor_creator()
 
     @staticmethod
     def get_future(actor: ActorBase, next_task: "SchedulerTask") -> Future:

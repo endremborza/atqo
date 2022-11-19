@@ -2,6 +2,7 @@ from queue import Queue
 
 import pytest
 
+from atqo import acquire_lock, get_lock
 from atqo.lock_stores import FileLockStore, LockStoreBase, MpLockStore, ThreadLockStore
 
 
@@ -17,6 +18,12 @@ def test_lock_store(lock_store_cls):
 
     l2 = lock_store.acquire("other")
     l2.release()
+
+    l3 = acquire_lock("l3")
+    l4 = get_lock("l4")
+    assert l3.locked()
+    l3.release()
+    assert not l4.locked()
 
 
 def test_multi_lock_store():

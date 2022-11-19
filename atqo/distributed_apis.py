@@ -1,10 +1,9 @@
-import asyncio
 import multiprocessing as mp
-from asyncio import Future
+from asyncio import Future, wrap_future
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing.managers import SyncManager
 from threading import Thread
-from typing import TYPE_CHECKING, Type
+from typing import TYPE_CHECKING
 
 from structlog import get_logger
 from tblib import Traceback
@@ -32,12 +31,12 @@ class MultiProcAPI(DistAPIBase):
         self._filler = Thread(target=self._fill_lock_q, name="filler", daemon=True)
         self._filler.start()
 
-    def get_running_actor(self, actor_cls, args, kwargs) -> "ActorBase":
-        return MPActorWrap(actor_cls, self.man, self._store, args, kwargs)
+    def get_running_actor(self, actor_creator) -> "ActorBase":
+        return MPActorWrap(actor_creator, self.man, self._store)
 
     @staticmethod
     def get_future(actor: ActorBase, next_task: "SchedulerTask") -> Future:
-        return asyncio.wrap_future(actor.consume(next_task.argument))
+        return wrap_future(actor.consume(next_task.argument))
 
     def join(self):
         self.man.shutdown()
@@ -53,29 +52,14 @@ class MultiProcAPI(DistAPIBase):
 
 
 class MPActorWrap(ActorBase):
-    def __init__(
-        self,
-        actor_cls: Type["ActorBase"],
-        man: SyncManager,
-        store,
-        args,
-        kwargs,
-    ):
+    def __init__(self, actor_creator, man: SyncManager, store):
 
-        self._inner_actor = actor_cls
+        self._inner_actor = actor_creator
         self._in_q = man.Queue(maxsize=1)
         self._out_q = man.Queue(maxsize=1)
         self.pool = ProcessPoolExecutor(1)
         _setup_q = mp.Queue()
-        _args = (
-            actor_cls,
-            self._in_q,
-            self._out_q,
-            _setup_q,
-            store,
-            args,
-            kwargs,
-        )
+        _args = (actor_creator, self._in_q, self._out_q, _setup_q, store)
         self.proc = mp.Process(target=_work_mp_actor, args=_args)
         self.proc.start()
         res = _setup_q.get()
@@ -90,19 +74,13 @@ class MPActorWrap(ActorBase):
         self.proc.join()
         self.pool.shutdown()
 
-    @property
-    def restart_after(self):
-        return self._inner_actor.restart_after
 
-
-def _work_mp_actor(
-    actor_cls, in_q, out_q, setup_q, store, args, kwargs
-):  # pragma: no cover
+def _work_mp_actor(actor_cls, in_q, out_q, setup_q, store):  # pragma: no cover
 
     global _GLOBAL_LOCK_STORE
     _GLOBAL_LOCK_STORE = store
     try:
-        actor = actor_cls(*args, **kwargs)
+        actor = actor_cls()
     except Exception as e:
         setup_q.put(e)
         return

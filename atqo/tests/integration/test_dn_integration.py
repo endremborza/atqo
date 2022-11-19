@@ -84,17 +84,17 @@ def test_minor_integration(dist_sys):
     out = []
     errs = []
 
-    def _processor(results):
-        for r in results:
-            if isinstance(r, ValueError):
-                errs.append(r)
-            else:
-                out.append(r)
+    def _processor(r):
+        if isinstance(r, ValueError):
+            errs.append(r)
+        else:
+            out.append(r)
 
-    scheduler.process(
+    sch_iter = scheduler.process(
         _Producer(tasks, tasks, [SchedulerTask("fing", [file_downloader])], tasks),
-        _processor,
     )
+
+    list(map(_processor, sch_iter))
     scheduler.join()
 
     assert sorted(out) == sorted(

@@ -1,9 +1,11 @@
-from itertools import chain, product
+import random
+import time
+from itertools import product
 
 import pytest
 
 from atqo import parallel_map
-from atqo.distributed_apis import DEFAULT_MULTI_API, DIST_API_MAP
+from atqo.distributed_apis import DIST_API_MAP
 
 
 def add2(x):
@@ -19,10 +21,14 @@ def div(x):
 
 
 @pytest.mark.parametrize(
-    ["fun", "inl"],
-    product([add2, extstr, div], [[1, 2, 3, 4, 5], ["a", 10, "b", 3], [None, 2, 0]]),
+    ["fun", "inl", "dapi"],
+    product(
+        [add2, extstr, div],
+        [[1, 2, 3, 4, 5], ["a", 10, "b", 3], [None, 2, 0]],
+        DIST_API_MAP.keys(),
+    ),
 )
-def test_batch(fun, inl):
+def test_batch(fun, inl, dapi):
     res = []
     exs = []
     for x in inl:
@@ -31,25 +37,12 @@ def test_batch(fun, inl):
         except Exception as e:
             exs.append(e)
 
-    map_outs = chain(
-        *[
-            [
-                parallel_map(fun, inl, dapi, raise_errors=False, verbose=True),
-                parallel_map(fun, iter(inl), dapi, raise_errors=False),
-            ]
-            for dapi in DIST_API_MAP.keys()
-        ],
-        [
-            parallel_map(
-                fun,
-                inl,
-                DEFAULT_MULTI_API,
-                raise_errors=False,
-                restart_after=1,
-                verbose=True,
-            )
-        ],
-    )
+    map_outs = [
+        list(parallel_map(fun, inl, dapi, raise_errors=False, verbose=True)),
+        parallel_map(fun, iter(inl), dapi, raise_errors=False),
+    ]
+
+    print(map_outs)
     for mout in map_outs:
         mres = []
         mex = []
@@ -66,9 +59,20 @@ def test_batch(fun, inl):
 def test_extras():
 
     with pytest.raises(TypeError):
-        parallel_map(
-            add2,
-            [1, 2, 3, "X", "Y"],
-            batch_size=3,
-            pbar=True,
-        )
+        list(parallel_map(add2, [1, 2, 3, "X", "Y"], batch_size=3, pbar=True))
+
+
+def slow_fun(x):  # pragma: no cover
+    time.sleep(random.random() / 100)
+    return x
+
+
+def test_simple():
+    out = sorted(parallel_map(slow_fun, range(100), pbar=True, verbose=True))
+    assert out == list(range(100))
+
+    def g():
+        for i in range(10):
+            yield i
+
+    assert sorted(parallel_map(slow_fun, g(), pbar=True)) == list(range(10))
