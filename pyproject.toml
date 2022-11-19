@@ -20,3 +20,6 @@ build-backend = "flit_core.buildapi"
 
 [tool.branb]
 line-length = 88
+
+[tool.pytest.ini_options]
+addopts = "-s"
