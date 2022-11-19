@@ -13,4 +13,4 @@ from .exceptions import UnexpectedCapabilities
 from .resource_handling import Capability, CapabilitySet
 from .simplified_functions import parallel_map
 
-__version__ = "0.2.5"
+__version__ = "0.3.0"
