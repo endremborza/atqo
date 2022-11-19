@@ -42,7 +42,6 @@ def test_batch(fun, inl, dapi):
         parallel_map(fun, iter(inl), dapi, raise_errors=False),
     ]
 
-    print(map_outs)
     for mout in map_outs:
         mres = []
         mex = []
