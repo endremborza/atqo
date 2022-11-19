@@ -65,7 +65,10 @@ class _Producer:
             return []
 
 
-@pytest.mark.parametrize("dist_sys", ["sync"])  # DIST_API_MAP.keys()
+DIST_API_MAP.keys()
+
+
+@pytest.mark.parametrize("dist_sys", ["sync"])
 def test_minor_integration(dist_sys):
 
     scheduler = Scheduler(
