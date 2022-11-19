@@ -13,7 +13,7 @@ from atqo.resource_handling import NumStore
     ["seed", "res_pop", "max_caps", "max_capsets"],
     product([10, 20, 42], ["ABCDEFGHIJKL", "XYZ"], [3, 4, 5], [6, 10, 20]),
 )
-def xtest_exchange(seed, res_pop, max_caps, max_capsets):
+def test_exchange(seed, res_pop, max_caps, max_capsets):
     rng = Random(seed)
     pop_n = len(res_pop)
 
@@ -109,7 +109,7 @@ fun_combs = [
     ["n_act", "mul", "param", "funlist"],
     product([1, 2, 10], [1, 3, 11], [3, 10], fun_combs),
 )
-def xtest_simple_cex(n_act, mul, param, funlist):
+def test_simple_cex(n_act, mul, param, funlist):
     capsets, cex = capset_cex_factory(n_act, mul)
     for fun in funlist:
         fun(cex, capsets, mul, n_act, param)

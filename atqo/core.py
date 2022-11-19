@@ -375,9 +375,7 @@ class ActorSet:
             await self._task_queues[task.requirements].queue.put(task)
             raise e
         except self.dist_api.exception as e:
-            self._log("Remote consumption error ", e=e, te=type(e), task=task)
-            if self._debug:
-                self._logger.exception(e)
+            self._log("Remote consumption error ", e=e, te=type(e).__name__, task=task)
             task.fail_count += 1
             if task.fail_count > task.max_fails:
                 result = TaskResult(self.dist_api.parse_exception(e), False, is_last)
@@ -397,7 +395,7 @@ class ActorSet:
 
     def _log(self, s, **kwargs):
         if self._debug:
-            self._logger.info(s, **kwargs)
+            get_logger(**self._log_dic).info(s, **kwargs)
 
     @property
     def _wait_on_tasks(self):
@@ -414,10 +412,6 @@ class ActorSet:
     @property
     def _task_keys(self):
         return filter(self.capset.__ge__, self._task_queues.keys())
-
-    @property
-    def _logger(self):
-        return get_logger(**self._log_dic)
 
     @property
     def _log_dic(self):

@@ -65,17 +65,14 @@ class _Producer:
             return []
 
 
-DIST_API_MAP.keys()
-
-
-@pytest.mark.parametrize("dist_sys", ["sync"])
+@pytest.mark.parametrize("dist_sys", DIST_API_MAP.keys())
 def test_minor_integration(dist_sys):
 
     scheduler = Scheduler(
         actor_dict=actor_dict,
         resource_limits=LIMIT_DIC,
         distributed_system=dist_sys,
-        # verbose=True,
+        verbose=True,
     )
     tasks = [
         SchedulerTask("small file", requirements=[file_uploader]),
