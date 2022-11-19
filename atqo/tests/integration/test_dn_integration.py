@@ -75,7 +75,7 @@ def test_minor_integration(dist_sys):
         actor_dict=actor_dict,
         resource_limits=LIMIT_DIC,
         distributed_system=dist_sys,
-        verbose=True,
+        # verbose=True,
     )
     tasks = [
         SchedulerTask("small file", requirements=[file_uploader]),
