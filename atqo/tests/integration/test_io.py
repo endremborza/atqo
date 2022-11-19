@@ -31,7 +31,7 @@ def write(arg: IoArg):
     ["size", "nfiles", "dkey"],
     product([5, 20], [2, 10], DIST_API_MAP.keys()),
 )
-def xtest_para_io(tmp_path: Path, size, nfiles, dkey):
+def test_para_io(tmp_path: Path, size, nfiles, dkey):
 
     rng = Random(120)
 
