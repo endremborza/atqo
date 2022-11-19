@@ -16,7 +16,7 @@ class Actor(ActorBase):
 
 
 @pytest.fixture
-def test_scheduler():
+def xtest_scheduler():
     actor_dict = {
         CapabilitySet([cap2, cap1]): Actor,
     }
@@ -46,7 +46,7 @@ class ListProd:
         return out
 
 
-def test_over_actors(test_scheduler: Scheduler):
+def xtest_over_actors(test_scheduler: Scheduler):
 
     tasks = [
         SchedulerTask("task1", requirements=[cap1]),
@@ -58,7 +58,7 @@ def test_over_actors(test_scheduler: Scheduler):
     assert out == ["done-task1"]
 
 
-def test_recurse(test_scheduler: Scheduler):
+def xtest_recurse(test_scheduler: Scheduler):
 
     tasks = [SchedulerTask(f"task{i}", requirements=[cap1]) for i in range(1, 9)]
 
