@@ -66,7 +66,7 @@ class _Producer:
 
 
 @pytest.mark.parametrize("dist_sys", [*DIST_API_MAP.keys(), "wrong"])
-def xtest_minor_integration(dist_sys):
+def test_minor_integration(dist_sys):
 
     scheduler = Scheduler(
         actor_dict=actor_dict,
