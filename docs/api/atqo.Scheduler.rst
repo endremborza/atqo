@@ -18,11 +18,11 @@ Scheduler
 
    .. autosummary::
 
-      ~Scheduler.get_processed_results
+      ~Scheduler.cleanup
+      ~Scheduler.iter_until_n_tasks_remain
       ~Scheduler.join
       ~Scheduler.process
       ~Scheduler.refill_task_queue
-      ~Scheduler.wait_until_n_tasks_remain
 
    .. rubric:: Attributes Documentation
 
@@ -32,8 +32,8 @@ Scheduler
 
    .. rubric:: Methods Documentation
 
-   .. automethod:: get_processed_results
+   .. automethod:: cleanup
+   .. automethod:: iter_until_n_tasks_remain
    .. automethod:: join
    .. automethod:: process
    .. automethod:: refill_task_queue
-   .. automethod:: wait_until_n_tasks_remain
