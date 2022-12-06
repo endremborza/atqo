@@ -49,7 +49,9 @@ class Scheduler:
     ) -> None:
         """Core scheduler class
 
-        default reorganize when:
+        results queue can pile up!
+
+        reorganize when:
           - new tasks are added
           - no new task can be consumed
           -
@@ -69,6 +71,7 @@ class Scheduler:
         )
         self._capset_exchange = CapsetExchange(actor_dict.keys(), resource_limits)
 
+        self._log("starting exchange", actors=actor_dict.keys(), limits=resource_limits)
         # TODO
         # concurrent_task_limit: Callable[[List[TaskPropertyBase]], bool]
         # self._active_task_properties = ActiveTaskPropertySet()
@@ -93,6 +96,7 @@ class Scheduler:
             logstr = f"{'empty' if empty_batch else 'new'} batch"
             self._log(logstr, size=batch_size, was_done=self.is_empty)
             if self.is_empty and empty_batch:
+                self._reorganize_actors()
                 break
             self.refill_task_queue(next_batch)
             target = 0 if empty_batch else min_queue_size
@@ -109,7 +113,8 @@ class Scheduler:
             capset = scheduler_task.requirements
             q = self._task_queues.get(capset) or self._q_of_new_capset(capset)
             q.put(scheduler_task)
-        self._reorganize_actors()
+        if self.queued_task_count > 0:
+            self._reorganize_actors()
 
     def iter_until_n_tasks_remain(self, remaining_tasks: int = 0):
         while True:
@@ -117,7 +122,7 @@ class Scheduler:
                 if self.is_idle and self._result_queue.empty():
                     return
                 tr = self._result_queue.get()
-                if tr.is_last_in_queue:
+                if (tr.source_queue.size == 0) and (self.queued_task_count > 0):
                     self._reorganize_actors()
                 yield tr.value
             else:
@@ -211,9 +216,12 @@ class Scheduler:
 
     def _set_actor_sets(self, ideals: dict):
         set_runs = [
-            self._actor_sets[cs].set_running_actors_to(new_ideal)
+            run
             for cs, new_ideal in ideals.items()
+            for run in self._actor_sets[cs].set_running_actors_to(new_ideal)
         ]
+        if len(set_runs) == 0:
+            return
         coro = asyncio.wait(map(self._loop.create_task, set_runs))
         done, _ = asyncio.run_coroutine_threadsafe(coro, loop=self._loop).result()
         for t in done:
@@ -300,12 +308,12 @@ class ActorSet:
         dic_str = [f"{k}={v}" for k, v in self._log_dic.items()]
         return f"{type(self).__name__}({', '.join(dic_str)}"
 
-    async def set_running_actors_to(self, target_count):
+    def set_running_actors_to(self, target_count):
         if target_count < self.running_actor_count:
-            await self.drain_to(target_count)
+            yield self.drain_to(target_count)
         elif target_count > self.running_actor_count:
             for _ in range(self.running_actor_count, target_count):
-                await self.add_new_actor()
+                yield self.add_new_actor()
 
     async def drain_to(self, target_count: int) -> int:
         n = 0
@@ -338,10 +346,10 @@ class ActorSet:
         # WARNING: if error happens here, it will get swallowed to the abyss
         self._log("consumer listening", running=type(running_actor).__name__)
         while True:
-            next_task, is_last = await self._get_next_task()
+            next_task, task_queue = await self._get_next_task()
             try:
                 self.in_prog += 1
-                await self._process_task(running_actor, next_task, is_last)
+                await self._process_task(running_actor, next_task, task_queue)
             except ActorListenBreaker as e:
                 await self._end_actor(running_actor, e, name)
                 return
@@ -350,16 +358,13 @@ class ActorSet:
 
     async def _get_next_task(self) -> tuple["SchedulerTask", bool]:
         while True:
-            await asyncio.wait(
-                self._wait_on_tasks,
-                return_when="FIRST_COMPLETED",
-            )
+            await asyncio.wait(self._wait_on_tasks, return_when="FIRST_COMPLETED")
             for t_queue in self._sorted_queues:
                 if t_queue.done():
-                    return t_queue.pop(), (t_queue.size == 0)
+                    return t_queue.pop(), t_queue
 
     async def _process_task(
-        self, running_actor: "ActorBase", task: "SchedulerTask", is_last: bool
+        self, running_actor: "ActorBase", task: "SchedulerTask", source_queue: TaskQueue
     ):
         if task is POISON_PILL:
             raise ActorPoisoned("poisoned")
@@ -369,7 +374,7 @@ class ActorSet:
                 if isinstance(out, DistantException):
                     out = out.e.with_traceback(out.tb.as_traceback())
                 raise out
-            self._result_queue.put(TaskResult(out, True, is_last))
+            self._result_queue.put(TaskResult(out, True, source_queue))
             return 0
         except ActorListenBreaker as e:
             await self._task_queues[task.requirements].queue.put(task)
@@ -378,7 +383,8 @@ class ActorSet:
             self._log("Remote consumption error ", e=e, te=type(e).__name__, task=task)
             task.fail_count += 1
             if task.fail_count > task.max_fails:
-                result = TaskResult(self.dist_api.parse_exception(e), False, is_last)
+                exc = self.dist_api.parse_exception(e)
+                result = TaskResult(exc, False, source_queue)
                 self._result_queue.put(result)
             else:
                 await self._task_queues[task.requirements].queue.put(task)
@@ -444,4 +450,4 @@ class SchedulerTask:
 class TaskResult:
     value: Any
     is_ok: bool
-    is_last_in_queue: bool
+    source_queue: "TaskQueue"
