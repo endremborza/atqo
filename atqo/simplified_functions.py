@@ -101,7 +101,7 @@ def parallel_map(
 
 
 def get_pinger(iterable, pbar):
-    if pbar is None:
+    if not pbar:
         return lambda: None
 
     from tqdm import tqdm
