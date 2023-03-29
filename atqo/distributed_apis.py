@@ -26,10 +26,11 @@ class MultiProcAPI(DistAPIBase):
     def __init__(self) -> None:
         mp.set_start_method("spawn", force=True)
         self.man = mp.Manager()
-        self._lock_queue = self.man.Queue(1)
-        self._store = MpLockStore(self.man.Lock(), self.man.dict(), self._lock_queue)
+        self._lock_queue = self.man.Queue(2)
+        self._lock_queue.put(self.man.Lock())
         self._filler = Thread(target=self._fill_lock_q, name="filler", daemon=True)
         self._filler.start()
+        self._store = MpLockStore(self.man.Lock(), self.man.dict(), self._lock_queue)
 
     def get_running_actor(self, actor_creator) -> "ActorBase":
         return MPActorWrap(actor_creator, self.man, self._store)
@@ -53,7 +54,6 @@ class MultiProcAPI(DistAPIBase):
 
 class MPActorWrap(ActorBase):
     def __init__(self, actor_creator, man: SyncManager, store):
-
         self._inner_actor = actor_creator
         self._in_q = man.Queue(maxsize=1)
         self._out_q = man.Queue(maxsize=1)
@@ -61,6 +61,7 @@ class MPActorWrap(ActorBase):
         _setup_q = mp.Queue()
         _args = (actor_creator, self._in_q, self._out_q, _setup_q, store)
         self.proc = mp.Process(target=_work_mp_actor, args=_args)
+        # TODO: warn that this might hang if something is not pickleable or sg
         self.proc.start()
         res = _setup_q.get()
         if isinstance(res, Exception):
@@ -76,7 +77,6 @@ class MPActorWrap(ActorBase):
 
 
 def _work_mp_actor(actor_cls, in_q, out_q, setup_q, store):  # pragma: no cover
-
     global _GLOBAL_LOCK_STORE
     _GLOBAL_LOCK_STORE = store
     try:
