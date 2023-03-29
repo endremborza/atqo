@@ -16,4 +16,3 @@ with
 
 came from [aswan](https://github.com/endremborza/aswan), as part of [sscub](https://sscu-budapest.github.io/) ecosystem cleanup
 
-lots to do, but aswan got bloated
