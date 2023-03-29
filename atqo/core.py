@@ -88,7 +88,6 @@ class Scheduler:
         batch_producer: Callable[[], list["SchedulerTask"]],
         min_queue_size: int = 0,
     ):
-
         while True:
             next_batch = batch_producer()
             batch_size = len(next_batch)
@@ -309,6 +308,7 @@ class ActorSet:
         return f"{type(self).__name__}({', '.join(dic_str)}"
 
     def set_running_actors_to(self, target_count):
+        self._log(f"setting count from {self.running_actor_count} to {target_count}")
         if target_count < self.running_actor_count:
             yield self.drain_to(target_count)
         elif target_count > self.running_actor_count:
