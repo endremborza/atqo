@@ -117,7 +117,6 @@ def test_simple_cex(n_act, mul, param, funlist):
 
 
 def test_repr():
-
     cex = CapsetExchange([CapabilitySet([])], {})
     assert "0" in cex.__repr__()
     with pytest.raises(NotEnoughResources):
@@ -125,7 +124,6 @@ def test_repr():
 
 
 def test_no_overshooting():
-
     limit = {"A": 20}
     caps = [Capability({"A": 1}), Capability({"A": 1})]
     cs1 = CapabilitySet(caps[:1])

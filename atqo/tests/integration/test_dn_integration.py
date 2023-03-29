@@ -20,7 +20,6 @@ file_downloader = Capability({REnum.CPU: 1, REnum.CONN: 500, REnum.MEM: 750}, na
 
 
 class _TestBase(ActorBase):
-
     prefix = "nofing"
 
     def __init__(self) -> None:
@@ -67,7 +66,6 @@ class _Producer:
 
 @pytest.mark.parametrize("dist_sys", DIST_API_MAP.keys())
 def test_minor_integration(dist_sys):
-
     scheduler = Scheduler(
         actor_dict=actor_dict,
         resource_limits=LIMIT_DIC,

@@ -32,7 +32,6 @@ def write(arg: IoArg):
     product([5, 20], [2, 10], DIST_API_MAP.keys()),
 )
 def test_para_io(tmp_path: Path, size, nfiles, dkey):
-
     rng = Random(120)
 
     data_dir = tmp_path / "data"

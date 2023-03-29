@@ -56,7 +56,6 @@ def test_batch(fun, inl, dapi):
 
 
 def test_extras():
-
     with pytest.raises(TypeError):
         list(parallel_map(add2, [1, 2, 3, "X", "Y"], batch_size=3, pbar=True))
 

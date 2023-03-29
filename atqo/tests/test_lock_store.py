@@ -8,7 +8,6 @@ from atqo.lock_stores import FileLockStore, LockStoreBase, MpLockStore, ThreadLo
 
 @pytest.mark.parametrize("lock_store_cls", [ThreadLockStore, FileLockStore])
 def test_lock_store(lock_store_cls):
-
     lock_store: LockStoreBase = lock_store_cls()
 
     lock = lock_store.get("lock")
@@ -27,7 +26,6 @@ def test_lock_store(lock_store_cls):
 
 
 def test_multi_lock_store():
-
     base = ThreadLockStore()
 
     main_lock = base.get("main")

@@ -20,7 +20,6 @@ def test_empty_scheduler():
 
 @pytest.mark.parametrize("dist_api", DIST_API_MAP.keys())
 def test_dead_end(dist_api):
-
     cap2 = Capability({"A": 2})
 
     scheduler = Scheduler(
@@ -44,7 +43,6 @@ class Actor(ActorBase):
 
 @pytest.mark.parametrize("dist_api", DIST_API_MAP.keys())
 def test_bad_init(dist_api):
-
     scheduler = Scheduler(
         {CapabilitySet([cap1]): partial(Actor, ("XX",))},
         {"A": 1},

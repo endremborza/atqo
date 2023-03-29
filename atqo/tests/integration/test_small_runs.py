@@ -47,7 +47,6 @@ class ListProd:
 
 
 def test_over_actors(test_scheduler: Scheduler):
-
     tasks = [
         SchedulerTask("task1", requirements=[cap1]),
     ]
@@ -59,7 +58,6 @@ def test_over_actors(test_scheduler: Scheduler):
 
 
 def test_recurse(test_scheduler: Scheduler):
-
     tasks = [SchedulerTask(f"task{i}", requirements=[cap1]) for i in range(1, 9)]
 
     out = []

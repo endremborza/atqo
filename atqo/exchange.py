@@ -80,7 +80,6 @@ class CapsetExchange:
         return True
 
     def _get_source_prices(self, capset: CapabilitySet):
-
         by_source = self._source_combs(capset.total_resource_use)
         if not by_source:
             msg = f"can't ever start {capset}: \n{capset.total_resource_use}"
@@ -89,7 +88,6 @@ class CapsetExchange:
         return [NumStore({capset: 1}) - p for p in by_source]
 
     def _get_barter_prices(self, capset: CapabilitySet):
-
         bf = BarterFinder(capset, self._actor_capsets)
 
         barters = []

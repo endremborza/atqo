@@ -65,7 +65,6 @@ def test_runoff(test_scheduler: Scheduler):
 
 
 def test_slow_start(test_scheduler: Scheduler):
-
     rtasks = [SchedulerTask(i, [cap1]) for i in range(10)]
     stasks = [SchedulerTask(i, [cap2]) for i in range(2)]
 

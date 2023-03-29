@@ -2,7 +2,6 @@ from atqo.resource_handling import Capability, NumStore
 
 
 def test_num_store():
-
     d1 = {"A": 10}
     ns1 = NumStore(d1)
     ns2 = ns1 + NumStore({"A": 5})
