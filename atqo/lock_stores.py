@@ -38,7 +38,14 @@ class MpLockStore(ThreadLockStore):
         try:
             out = self._locks[key]
         except KeyError:
-            out = self._lock_queue.get()
+            for _ in range(5):  # TODO: fuck python
+                try:
+                    out = self._lock_queue.get()
+                    break
+                except TypeError:
+                    pass  # pragma: no cover
+            else:
+                raise OSError("python is crazy")  # pragma: no cover
             self._locks[key] = out
         finally:
             self._main_lock.release()
@@ -47,7 +54,6 @@ class MpLockStore(ThreadLockStore):
 
 class FileLockStore(LockStoreBase):
     def __init__(self, root: str = None) -> None:
-
         from portalocker import Lock
 
         self._lock_cls = Lock
