@@ -11,6 +11,6 @@ from .distributed_apis import (
 )
 from .exceptions import UnexpectedCapabilities
 from .resource_handling import Capability, CapabilitySet
-from .simplified_functions import parallel_map
+from .simplified_functions import parallel_consume, parallel_map
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
