@@ -1,9 +1,10 @@
 import multiprocessing as mp
 from asyncio import Future, wrap_future
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from multiprocessing.managers import SyncManager
 from threading import Thread
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from structlog import get_logger
 from tblib import Traceback
@@ -71,32 +72,47 @@ class MPActorWrap(ActorBase):
         return self.pool.submit(_add_task_mp, task_arg, self._in_q, self._out_q)
 
     def stop(self):
+        self.pool.submit(_poison_queue, self._in_q)
+        self.proc.join(timeout=5)
         self.proc.kill()
         self.proc.join()
         self.pool.shutdown()
+
+
+@dataclass
+class DistArg:
+    arg: Any
+    poison: bool = False
 
 
 def _work_mp_actor(actor_cls, in_q, out_q, setup_q, store):  # pragma: no cover
     global _GLOBAL_LOCK_STORE
     _GLOBAL_LOCK_STORE = store
     try:
-        actor = actor_cls()
+        actor: ActorBase = actor_cls()
     except Exception as e:
         setup_q.put(e)
         return
     setup_q.put(0)
     while True:
-        arg = in_q.get()
+        arg: DistArg = in_q.get()
+        if arg.poison:
+            actor.stop()
+            return
         try:
-            res = actor.consume(arg)
+            res = actor.consume(arg.arg)
         except Exception as e:
             res = DistantException(e, Traceback(e.__traceback__))
         out_q.put(res)
 
 
 def _add_task_mp(task_arg, in_q: mp.Queue, out_q: mp.Queue):
-    in_q.put(task_arg)
+    in_q.put(DistArg(task_arg))
     return out_q.get()
+
+
+def _poison_queue(in_q: mp.Queue):
+    in_q.put(DistArg(None, True))
 
 
 DEFAULT_DIST_API_KEY = "sync"
