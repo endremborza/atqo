@@ -20,7 +20,7 @@ from .exceptions import (
 from .rate import RateLimit
 from .simplified_functions import parallel_consume, parallel_map
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 __all__ = [
     "ActorBase",
