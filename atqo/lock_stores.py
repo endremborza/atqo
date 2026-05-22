@@ -1,11 +1,7 @@
 from abc import abstractmethod
 from collections import defaultdict
-from pathlib import Path
 from queue import Queue
-from tempfile import TemporaryDirectory
 from threading import Lock
-
-SEPARATOR = "://"
 
 
 class LockStoreBase:
@@ -38,35 +34,15 @@ class MpLockStore(ThreadLockStore):
         try:
             out = self._locks[key]
         except KeyError:
-            for _ in range(5):  # TODO: fuck python
+            for _ in range(5):
                 try:
                     out = self._lock_queue.get()
                     break
-                except TypeError:
-                    pass  # pragma: no cover
+                except TypeError:  # pragma: no cover
+                    pass
             else:
-                raise OSError("python is crazy")  # pragma: no cover
+                raise OSError("lock queue exhausted")  # pragma: no cover
             self._locks[key] = out
         finally:
             self._main_lock.release()
         return out
-
-
-class FileLockStore(LockStoreBase):
-    def __init__(self, root: str = None) -> None:
-        from portalocker import Lock
-
-        self._lock_cls = Lock
-        self.root = root or TemporaryDirectory().name
-
-    def get(self, key) -> Lock:
-        return self._lock_cls(self._get_path(key))
-
-    def _get_path(self, key):
-        try:
-            subpath = Path(key).relative_to(Path(self.root).root)
-        except ValueError:
-            subpath = Path(key)
-        path = Path(self.root, subpath).with_suffix(".lock")
-        path.parent.mkdir(exist_ok=True, parents=True)
-        return path

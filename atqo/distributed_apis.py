@@ -6,7 +6,6 @@ from multiprocessing.managers import SyncManager
 from threading import Thread
 from typing import TYPE_CHECKING, Any
 
-from structlog import get_logger
 from tblib import Traceback
 
 from .bases import ActorBase, DistAPIBase
@@ -15,8 +14,6 @@ from .lock_stores import MpLockStore, ThreadLockStore
 
 if TYPE_CHECKING:
     from .core import SchedulerTask  # pragma: no cover
-
-logger = get_logger()
 
 
 class SyncAPI(DistAPIBase):
@@ -106,18 +103,14 @@ def _work_mp_actor(actor_cls, in_q, out_q, setup_q, store):  # pragma: no cover
         out_q.put(res)
 
 
-def _add_task_mp(task_arg, in_q: mp.Queue, out_q: mp.Queue):
+def _add_task_mp(task_arg, in_q: mp.Queue, out_q: mp.Queue):  # pragma: no cover
     in_q.put(DistArg(task_arg))
     return out_q.get()
 
 
-def _poison_queue(in_q: mp.Queue):
+def _poison_queue(in_q: mp.Queue):  # pragma: no cover
     in_q.put(DistArg(None, True))
 
-
-DEFAULT_DIST_API_KEY = "sync"
-DEFAULT_MULTI_API = "mp"
-DIST_API_MAP = {DEFAULT_DIST_API_KEY: SyncAPI, DEFAULT_MULTI_API: MultiProcAPI}
 
 try:
     _GLOBAL_LOCK_STORE
@@ -133,13 +126,3 @@ def acquire_lock(lock_id):
     lock = get_lock(lock_id)
     lock.acquire()
     return lock
-
-
-def get_dist_api(key) -> "DistAPIBase":
-    try:
-        return DIST_API_MAP[key]
-    except KeyError:
-        default = DIST_API_MAP[DEFAULT_DIST_API_KEY]
-        err = f"unknown distributed system: {key}, defaulting {default}"
-        logger.warning(err)
-        return default

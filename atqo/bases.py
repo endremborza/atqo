@@ -1,39 +1,33 @@
+import logging
 from abc import ABC, abstractmethod
 from asyncio import Future
-from functools import cached_property
-from typing import TYPE_CHECKING
-
-from structlog import get_logger
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from .core import SchedulerTask  # pragma: no cover
 
 
-class TaskPropertyBase:  # pragma: no cover
-    # TODO
-    def __repr__(self):
-        param_str = ", ".join(f"{k}={v}" for k, v in self.__dict__.items())
-        return f"{type(self).__name__}({param_str})"
-
-    def __hash__(self):
-        return id(self).__hash__()
-
-    def __eq__(self, other):
-        return self.__hash__() == other.__hash__()
-
-
 class ActorBase(ABC):
+    requirements: ClassVar[dict[str, int]] = {}
+
     @abstractmethod
     def consume(self, task_arg):
         pass  # pragma: no cover
 
     def stop(self):
-        """if any cleanup needed"""
         pass  # pragma: no cover
 
-    @cached_property
-    def _log(self):
-        return get_logger(actor=type(self).__name__).info
+    def _log(self, msg, **kwargs):
+        logging.getLogger(f"atqo.{type(self).__name__}").info(
+            f"{msg} {kwargs}" if kwargs else msg
+        )
+
+
+class SingleCPUActor(ActorBase):
+    requirements: ClassVar[dict[str, int]] = {"cpu": 1}
+
+    def consume(self, task_arg):  # pragma: no cover
+        raise NotImplementedError
 
 
 class DistAPIBase(ABC):
@@ -42,7 +36,6 @@ class DistAPIBase(ABC):
         return Exception
 
     def join(self):
-        """wait on all running tasks"""
         pass
 
     @staticmethod

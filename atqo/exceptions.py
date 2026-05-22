@@ -1,10 +1,6 @@
 from tblib import Traceback
 
 
-class UnexpectedCapabilities(Exception):
-    pass
-
-
 class ActorListenBreaker(Exception):
     pass
 
@@ -18,6 +14,26 @@ class NotEnoughResources(Exception):
 
 
 class NotEnoughResourcesToContinue(NotEnoughResources):
+    pass
+
+
+class UnknownResource(Exception):
+    pass
+
+
+class UnknownRateLimit(Exception):
+    pass
+
+
+class ImpossibleRateCost(Exception):
+    pass
+
+
+class UnknownActor(Exception):
+    pass
+
+
+class SchedulerStalled(Exception):
     pass
 
 

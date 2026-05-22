@@ -2,27 +2,12 @@ from functools import partial
 from itertools import islice
 from multiprocessing import cpu_count
 
-from .bases import ActorBase
+from .bases import ActorBase, SingleCPUActor
 from .core import Scheduler, SchedulerTask
-from .distributed_apis import DEFAULT_MULTI_API
-from .resource_handling import Capability, CapabilitySet
-
-_RES = "CPU"
-_CAP = Capability({_RES: 1})
-_Task = partial(SchedulerTask, requirements=[_CAP])
+from .distributed_apis import MultiProcAPI
 
 
-class BatchProd:
-    def __init__(self, iterable, batch_size, mapper=_Task) -> None:
-        self._size = batch_size
-        self._it = iter(iterable)
-        self._mapper = mapper
-
-    def __call__(self):
-        return [*map(self._mapper, islice(self._it, self._size))]
-
-
-class ActWrap(ActorBase):
+class _ActWrap(SingleCPUActor):
     def __init__(self, fun) -> None:
         self._f = fun
 
@@ -30,10 +15,20 @@ class ActWrap(ActorBase):
         return self._f(task_arg)
 
 
+class BatchProd:
+    def __init__(self, iterable, batch_size, mapper=None) -> None:
+        self._size = batch_size
+        self._it = iter(iterable)
+        self._mapper = mapper or (lambda x: SchedulerTask(x))
+
+    def __call__(self):
+        return [self._mapper(x) for x in islice(self._it, self._size)]
+
+
 def get_simp_scheduler(n, Actor, dist_sys, verbose) -> Scheduler:
     return Scheduler(
-        actor_dict={CapabilitySet([_CAP]): Actor},
-        resource_limits={_RES: n},
+        actors=[Actor],
+        resources={"cpu": n},
         distributed_system=dist_sys,
         verbose=verbose,
     )
@@ -42,7 +37,7 @@ def get_simp_scheduler(n, Actor, dist_sys, verbose) -> Scheduler:
 def parallel_consume(
     Actor: type[ActorBase],
     iterable,
-    dist_api=DEFAULT_MULTI_API,
+    dist_api=MultiProcAPI,
     batch_size=None,
     min_queue_size=None,
     workers=None,
@@ -58,10 +53,9 @@ def parallel_consume(
     pinger = get_pinger(iterable, pbar)
     scheduler = get_simp_scheduler(nw, Actor, dist_api, verbose)
 
+    mapper = partial(SchedulerTask, allowed_fail_count=allowed_fail_count)
     out_iter = scheduler.process(
-        batch_producer=BatchProd(
-            iterable, batch_size, partial(_Task, allowed_fail_count=allowed_fail_count)
-        ),
+        batch_producer=BatchProd(iterable, batch_size, mapper),
         min_queue_size=min_queue_size,
     )
     try:
@@ -77,7 +71,7 @@ def parallel_consume(
 def parallel_map(
     fun,
     iterable,
-    dist_api=DEFAULT_MULTI_API,
+    dist_api=MultiProcAPI,
     batch_size=None,
     min_queue_size=None,
     workers=None,
@@ -87,7 +81,7 @@ def parallel_map(
     allowed_fail_count=0,
 ):
     return parallel_consume(
-        partial(ActWrap, fun=fun),
+        partial(_ActWrap, fun=fun),
         iterable,
         dist_api,
         batch_size,

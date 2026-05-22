@@ -1,30 +1,34 @@
 import asyncio
+import concurrent.futures as cf
+import logging
+import time
 import uuid
-from dataclasses import dataclass
-from enum import Enum
+from dataclasses import dataclass, field
 from functools import partial
-from itertools import chain
-from queue import Queue
+from queue import Empty, Queue
 from threading import Thread
-from typing import Any, Callable, Iterable, Union
+from typing import Any, Callable, Iterable, Optional, Union
 
-from structlog import get_logger
-
-from .bases import ActorBase, DistAPIBase, TaskPropertyBase
-from .distributed_apis import DEFAULT_DIST_API_KEY, get_dist_api
+from .bases import ActorBase, DistAPIBase
+from .distributed_apis import SyncAPI
 from .exceptions import (
     ActorListenBreaker,
     ActorPoisoned,
     DistantException,
+    NotEnoughResources,
     NotEnoughResourcesToContinue,
+    SchedulerStalled,
+    UnknownActor,
+    UnknownResource,
 )
-from .exchange import CapsetExchange
-from .resource_handling import Capability, CapabilitySet, NumStore
+from .exchange import ResourceExchange
+from .rate import RateGate, RateLimit
 from .utils import dic_val_filt
 
-POISON_KEY = frozenset([])  # just make sure it comes before any other
 POISON_PILL = None
-ALLOWED_CONSUMER_FAILS = 5
+DEFAULT_POLL_INTERVAL = 0.05
+DEFAULT_POISON_TIMEOUT = 5.0
+ACTOR_RESIZE_TIMEOUT_MULTIPLIER = 6
 
 
 def _start_loop(loop: asyncio.AbstractEventLoop) -> None:
@@ -39,49 +43,123 @@ def _get_loop_of_daemon():
     return loop, thread
 
 
+def _default_resources() -> dict[str, int]:
+    from multiprocessing import cpu_count
+
+    return {"cpu": cpu_count()}
+
+
+def _underlying_class(actor) -> type[ActorBase]:
+    cls = actor.func if isinstance(actor, partial) else actor
+    if not isinstance(cls, type) or not issubclass(cls, ActorBase):
+        raise TypeError(f"{actor!r} is not an ActorBase subclass or partial of one")
+    return cls
+
+
 class Scheduler:
+    """Resource-aware async task scheduler.
+
+    Hang protection:
+      - All blocking waits use ``poll_interval`` and re-check exit conditions.
+      - If ``stall_timeout`` is set, no progress for that long raises
+        ``SchedulerStalled``.
+      - If ``task_timeout`` is set, individual tasks taking longer fail their
+        attempt (and may exhaust ``allowed_fail_count``).
+      - ``cleanup()`` and ``join()`` always cancel listeners and stop the loop;
+        they will never wait indefinitely.
+    """
+
     def __init__(
         self,
-        actor_dict: dict[CapabilitySet, Union[type["ActorBase"], partial]],
-        resource_limits: dict[Enum, float],
-        distributed_system: str = DEFAULT_DIST_API_KEY,
-        verbose=False,
+        actors: Optional[Iterable[Union[type[ActorBase], partial]]] = None,
+        resources: Optional[dict[str, int]] = None,
+        rate_limits: Optional[dict[str, RateLimit]] = None,
+        distributed_system: type[DistAPIBase] = SyncAPI,
+        task_timeout: Optional[float] = None,
+        stall_timeout: Optional[float] = None,
+        poll_interval: float = DEFAULT_POLL_INTERVAL,
+        poison_timeout: float = DEFAULT_POISON_TIMEOUT,
+        verbose: bool = False,
     ) -> None:
-        """Core scheduler class
+        actors = list(actors or [])
+        resources = dict(resources) if resources is not None else _default_resources()
+        rate_limits = dict(rate_limits) if rate_limits else {}
 
-        results queue can pile up!
+        partials: dict[type[ActorBase], partial] = {}
+        for entry in actors:
+            cls = _underlying_class(entry)
+            if cls in partials:
+                raise ValueError(
+                    f"actor class {cls.__name__} registered more than once"
+                )
+            partials[cls] = entry if isinstance(entry, partial) else partial(entry)
 
-        reorganize when:
-          - new tasks are added
-          - no new task can be consumed
-          -
+        for cls in partials:
+            for res, n in cls.requirements.items():
+                if res not in resources:
+                    raise UnknownResource(
+                        f"{cls.__name__} requires {res!r}, not in scheduler "
+                        f"resources {list(resources)}"
+                    )
+                if not isinstance(n, int) or n <= 0:
+                    raise ValueError(
+                        f"{cls.__name__}.requirements[{res!r}] must be a positive "
+                        f"int, got {n!r}"
+                    )
+                if n > resources[res]:
+                    raise NotEnoughResources(
+                        f"{cls.__name__} requires {res}={n} but resource pool "
+                        f"has {res}={resources[res]}"
+                    )
 
-        """
-        for _, v in actor_dict.items():
-            _ab = v.func if isinstance(v, partial) else v
-            assert ActorBase in _ab.mro()
+        self._actor_classes = list(partials.keys())
+        self._actor_partials = partials
+        self._resources = resources
+        self._rate_gate = RateGate(rate_limits)
+        self._task_timeout = task_timeout
+        self._stall_timeout = stall_timeout
+        self._poll_interval = poll_interval
+        self._poison_timeout = poison_timeout
+        self._put_timeout = stall_timeout
+        self._verbose = verbose
 
         self._loop, self._thread = _get_loop_of_daemon()
         self._result_queue: Queue[TaskResult] = Queue()
-        self._task_queues: dict[CapabilitySet, TaskQueue] = {}
-        self._verbose = verbose
-        self._dist_api: DistAPIBase = get_dist_api(distributed_system)()
-        self._actor_sets: dict[CapabilitySet, ActorSet] = dict(
-            self._get_actor_set_items(actor_dict)
-        )
-        self._capset_exchange = CapsetExchange(actor_dict.keys(), resource_limits)
-
-        self._log("starting exchange", actors=actor_dict.keys(), limits=resource_limits)
-        # TODO
-        # concurrent_task_limit: Callable[[List[TaskPropertyBase]], bool]
-        # self._active_task_properties = ActiveTaskPropertySet()
-        # self._task_limiter = concurrent_task_limit
+        self._task_queues: dict[type[ActorBase], TaskQueue] = {
+            cls: TaskQueue(self._loop) for cls in self._actor_classes
+        }
+        self._dist_api = distributed_system()
+        self._actor_sets: dict[type[ActorBase], ActorSet] = {
+            cls: ActorSet(
+                partials[cls],
+                self._dist_api,
+                cls,
+                self._task_queues[cls],
+                self._result_queue,
+                self._loop,
+                self._rate_gate,
+                self._task_timeout,
+                self._poison_timeout,
+                self._verbose,
+            )
+            for cls in self._actor_classes
+        }
+        self._exchange = ResourceExchange(self._actor_classes, resources)
+        self._closed = False
+        self._log("scheduler ready", actors=list(partials), resources=resources)
 
     def __del__(self):
         try:
-            self._dist_api.join()
-        except AttributeError:  # pragma: no cover
+            self.cleanup()
+        except Exception:
             pass
+
+    def __enter__(self) -> "Scheduler":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self.cleanup()
+        return False
 
     def process(
         self,
@@ -92,54 +170,125 @@ class Scheduler:
             next_batch = batch_producer()
             batch_size = len(next_batch)
             empty_batch = batch_size == 0
-            logstr = f"{'empty' if empty_batch else 'new'} batch"
-            self._log(logstr, size=batch_size, was_done=self.is_empty)
+            self._log(
+                "empty batch" if empty_batch else "new batch",
+                size=batch_size,
+                was_done=self.is_empty,
+            )
             if self.is_empty and empty_batch:
                 self._reorganize_actors()
                 break
             self.refill_task_queue(next_batch)
             target = 0 if empty_batch else min_queue_size
             try:
-                for res in self.iter_until_n_tasks_remain(target):
-                    yield res
+                yield from self.iter_until_n_tasks_remain(target)
             except KeyboardInterrupt:  # pragma: no cover
-                self._log(f"Interrupted waiting for {self}")
+                self._log("Interrupted")
                 break
 
     def refill_task_queue(self, task_batch: Iterable["SchedulerTask"]):
-        # invalid state error is raised if future is already set on task
-        for scheduler_task in task_batch:
-            capset = scheduler_task.requirements
-            q = self._task_queues.get(capset) or self._q_of_new_capset(capset)
-            q.put(scheduler_task)
-        if self.queued_task_count > 0:
-            self._reorganize_actors()
+        tasks = list(task_batch)
+        for task in tasks:
+            self._validate_task(task)
+        if not tasks:
+            return
+        delta: dict = {}
+        for task in tasks:
+            delta[task.actor] = delta.get(task.actor, 0) + 1
+        need = {
+            cls: tq.size + delta.get(cls, 0) for cls, tq in self._task_queues.items()
+        }
+        new_ideals = self._exchange.set_values(need)
+        if (
+            any(v > 0 for v in need.values()) and self._exchange.idle
+        ):  # pragma: no cover
+            self.cleanup()
+            raise NotEnoughResourcesToContinue(
+                f"no actor type can fulfill demand "
+                f"{ {c.__name__: n for c, n in need.items() if n} }"
+            )
+        self._set_actor_sets(new_ideals)
+        for task in tasks:
+            self._task_queues[task.actor].put(task, timeout=self._put_timeout)
 
     def iter_until_n_tasks_remain(self, remaining_tasks: int = 0):
+        if self._closed:
+            return
+        last_progress = time.monotonic()
+        last_seen = (self._in_progress_or_queued, self.queued_task_count)
         while True:
-            if self._in_progress_or_queued >= remaining_tasks:
-                if self.is_idle and self._result_queue.empty():
-                    return
-                tr = self._result_queue.get()
-                if (tr.source_queue.size == 0) and (self.queued_task_count > 0):
-                    self._reorganize_actors()
-                yield tr.value
-            else:
-                break
+            if (
+                self._in_progress_or_queued <= remaining_tasks
+                and self._result_queue.empty()
+            ):
+                return
+            try:
+                tr = self._result_queue.get(timeout=self._poll_interval)
+            except Empty:
+                current = (self._in_progress_or_queued, self.queued_task_count)
+                if current != last_seen:
+                    last_seen = current
+                    last_progress = time.monotonic()
+                elif self._stall_timeout is not None:
+                    if time.monotonic() - last_progress > self._stall_timeout:
+                        raise SchedulerStalled(
+                            f"no progress for {self._stall_timeout}s; "
+                            f"in_progress_or_queued={current[0]}, "
+                            f"queued={current[1]}"
+                        )
+                continue
+            last_progress = time.monotonic()
+            last_seen = (self._in_progress_or_queued, self.queued_task_count)
+            if (tr.source_queue.size == 0) and (self.queued_task_count > 0):
+                self._reorganize_actors()
+            yield tr.value
 
     def join(self):
-        out = list(self.iter_until_n_tasks_remain(0))
-        self._set_actor_sets({k: 0 for k in self._actor_sets.keys()})
+        if self._closed:
+            return []
+        try:
+            out = list(self.iter_until_n_tasks_remain(0))
+        except Exception:
+            self.cleanup()
+            raise
         self.cleanup()
-        self._dist_api.join()
         return out
 
     def cleanup(self):
-        for aset in self._actor_sets.values():
-            aset.poison_queue.cancel()
-        for t_queue in self._task_queues.values():
-            t_queue.cancel()
-        self._loop.stop()
+        if self._closed:
+            return
+        self._closed = True
+
+        async def _shutdown():
+            tasks: list[asyncio.Task] = []
+            for aset in self._actor_sets.values():
+                tasks.extend(aset._actor_listening_async_task_dict.values())
+                tasks.append(aset.poison_queue.getting_task)
+            for q in self._task_queues.values():
+                tasks.append(q.getting_task)
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            for aset in self._actor_sets.values():
+                aset._actor_listening_async_task_dict.clear()
+
+        if self._loop.is_running():
+            try:
+                fut = asyncio.run_coroutine_threadsafe(_shutdown(), self._loop)
+                fut.result(timeout=2.0)
+            except (cf.TimeoutError, RuntimeError):
+                pass
+
+        try:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        except RuntimeError:  # pragma: no cover
+            pass
+        try:
+            self._dist_api.join()
+        except Exception:  # pragma: no cover
+            pass
 
     @property
     def is_empty(self) -> bool:
@@ -150,94 +299,80 @@ class Scheduler:
         return not self._in_progress_or_queued
 
     @property
-    def queued_task_count(self):
-        return sum([tq.size for tq in self._task_queues.values()])
+    def queued_task_count(self) -> int:
+        return sum(tq.size for tq in self._task_queues.values())
 
-    def _log(self, logstr, **kwargs):
+    def _validate_task(self, task: "SchedulerTask"):
+        if task.actor is None:
+            if len(self._actor_classes) != 1:
+                raise UnknownActor(
+                    "task.actor=None requires exactly one registered actor "
+                    f"class; have {[c.__name__ for c in self._actor_classes]}"
+                )
+            task.actor = self._actor_classes[0]
+        else:
+            task.actor = _underlying_class(task.actor)
+            if task.actor not in self._task_queues:
+                raise UnknownActor(
+                    f"task.actor={task.actor!r} not registered; "
+                    f"have {[c.__name__ for c in self._actor_classes]}"
+                )
+        if task.rate_costs:
+            self._rate_gate.validate_cost(task.rate_costs)
+
+    def _log(self, msg, **kwargs):
         if self._verbose:
-            get_logger(
-                api=type(self._dist_api).__name__,
-                queued=self.queued_task_count,
-                working=self._running_consumer_count,
-            ).info(logstr, **kwargs)
-
-    def _q_of_new_capset(self, capset: CapabilitySet) -> "TaskQueue":
-        new_task_queue = TaskQueue(self._loop)
-        self._task_queues[capset] = new_task_queue
-        for task_cs, task_queue in self._task_queues.items():
-            if task_cs > capset:
-                task_queue.reset_ping()
-        return new_task_queue
-
-    def _get_actor_set_items(self, actor_dict: dict):
-        for capset, actor in actor_dict.items():
-            pactor = actor if isinstance(actor, partial) else partial(actor)
-            yield capset, ActorSet(
-                pactor,
-                self._dist_api,
-                capset,
-                self._task_queues,
-                self._result_queue,
-                self._loop,
-                self._verbose,
-            )
+            ctx = {
+                "api": type(self._dist_api).__name__,
+                "queued": self.queued_task_count,
+                "working": self._running_consumer_count,
+                **kwargs,
+            }
+            logging.getLogger("atqo.scheduler").info(f"{msg} {ctx}")
 
     def _reorganize_actors(self):
-        """optimize actor set sizes
-
-        target: minimize max n(tasks<=capset) / n(actors>=capset)
-                for all task queue capsets
-        limit: capset resource use * n_actors <=total resource avail
-               for all actorset capsets
-
-        heuristic:
-        value of adding: decrease caused in  target / number possible remaining
-
-        """
-        need_dic = {cs: t.size for cs, t in self._task_queues.items()}
-        new_needs = NumStore(need_dic)
-        new_ideals = self._capset_exchange.set_values(new_needs)
-        curr = {c: a.running_actor_count for c, a in self._actor_sets.items()}
-        for pref, dic in [("need", need_dic), ("from", curr), ("to", new_ideals)]:
-            self._log(f"reorganizing {pref} {dic_val_filt(dic)}")
-
+        need_dic = {cls: tq.size for cls, tq in self._task_queues.items()}
+        curr = {cls: aset.running_actor_count for cls, aset in self._actor_sets.items()}
+        new_ideals = self._exchange.set_values(need_dic)
+        for tag, dic in [("need", need_dic), ("from", curr), ("to", new_ideals)]:
+            self._log(f"reorganizing {tag} {dic_val_filt(dic)}")
         self._set_actor_sets(new_ideals)
-        self._log("reorganized")
-
-        dead_end = self.queued_task_count and self._capset_exchange.idle
-
-        if dead_end:
-            # TODO: can be stuck here sometimes somehow :(
+        if self.queued_task_count and self._exchange.idle:  # pragma: no cover
             self.cleanup()
             raise NotEnoughResourcesToContinue(
-                f"{self.queued_task_count} remaining and no launchable actors"
+                f"{self.queued_task_count} tasks remaining and no launchable actors"
             )
 
     def _set_actor_sets(self, ideals: dict):
-        set_runs = [
+        runs = [
             run
-            for cs, new_ideal in ideals.items()
-            for run in self._actor_sets[cs].set_running_actors_to(new_ideal)
+            for cls, n in ideals.items()
+            for run in self._actor_sets[cls].set_running_actors_to(n)
         ]
-        if len(set_runs) == 0:
+        if not runs:
             return
-        coro = asyncio.wait(map(self._loop.create_task, set_runs))
-        done, _ = asyncio.run_coroutine_threadsafe(coro, loop=self._loop).result()
-        for t in done:
-            e = t.exception()
-            if e:
-                raise e
 
-        # self._thread.join()
-        # self._loop.close()
+        async def _run_all():
+            return await asyncio.gather(*runs, return_exceptions=True)
+
+        fut = asyncio.run_coroutine_threadsafe(_run_all(), loop=self._loop)
+        try:
+            results = fut.result(
+                timeout=self._poison_timeout * ACTOR_RESIZE_TIMEOUT_MULTIPLIER
+            )
+        except Exception:  # pragma: no cover
+            fut.cancel()
+            raise
+        for r in results:
+            if isinstance(r, BaseException):
+                raise r
 
     @property
     def _running_consumer_count(self):
-        return sum([aset.running_actor_count for aset in self._actor_sets.values()])
+        return sum(aset.running_actor_count for aset in self._actor_sets.values())
 
     @property
     def _in_progress_or_queued(self):
-        # TODO: race condition here?
         return self.queued_task_count + sum(
             aset.in_prog for aset in self._actor_sets.values()
         )
@@ -246,204 +381,230 @@ class Scheduler:
 class TaskQueue:
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
-        self.queue = asyncio.Queue()
+        self.queue: asyncio.Queue = asyncio.Queue()
         self.getting_task = loop.create_task(self.queue.get())
-        self.ping = loop.create_future()
-
-    def reset_ping(self):
-        self.ping.set_result(None)
-        self.ping = self.loop.create_future()
 
     def pop(self):
         out = self.getting_task.result()
         self.getting_task = self.loop.create_task(self.queue.get())
         return out
 
-    def put(self, item):
-        asyncio.run_coroutine_threadsafe(self.queue.put(item), self.loop).result()
+    def put(self, item, timeout: Optional[float] = None):
+        fut = asyncio.run_coroutine_threadsafe(self.queue.put(item), self.loop)
+        try:
+            fut.result(timeout=timeout)
+        except cf.TimeoutError as e:
+            fut.cancel()
+            raise SchedulerStalled(
+                "event loop unresponsive: failed to enqueue task within "
+                f"{timeout}s (an actor is likely blocking the loop)"
+            ) from e
 
-    @property
-    def cancel(self):
-        return self.getting_task.cancel
-
-    @property
     def done(self):
-        return self.getting_task.done
+        return self.getting_task.done()
 
     @property
     def size(self):
         return self.queue.qsize() + int(self.getting_task.done())
-
-    @property
-    def tasks(self):
-        return [self.ping, self.getting_task]
 
 
 class ActorSet:
     def __init__(
         self,
         actor_partial: partial,
-        dist_api: "DistAPIBase",
-        capset: CapabilitySet,
-        task_queues: dict[CapabilitySet, TaskQueue],
+        dist_api: DistAPIBase,
+        actor_cls: type[ActorBase],
+        task_queue: TaskQueue,
         result_queue: Queue,
         loop: asyncio.AbstractEventLoop,
+        rate_gate: RateGate,
+        task_timeout: Optional[float],
+        poison_timeout: float,
         debug: bool,
     ) -> None:
         self.actor_partial = actor_partial
         self.dist_api = dist_api
-        self.capset = capset
+        self.actor_cls = actor_cls
+        self._task_queue = task_queue
+        self._result_queue = result_queue
+        self._loop = loop
+        self._rate_gate = rate_gate
+        self._task_timeout = task_timeout
+        self._poison_timeout = poison_timeout
+        self._debug = debug
 
         self.poison_queue = TaskQueue(loop)
         self._poisoning_done_future = loop.create_future()
-        self._loop = loop
-        self._task_queues = task_queues
-        self._result_queue = result_queue
         self._actor_listening_async_task_dict: dict[str, asyncio.Task] = {}
-        self._debug = debug
         self.in_prog = 0
 
     def __repr__(self):
-        dic_str = [f"{k}={v}" for k, v in self._log_dic.items()]
-        return f"{type(self).__name__}({', '.join(dic_str)}"
+        return (
+            f"ActorSet({self.actor_cls.__name__}, "
+            f"running={self.running_actor_count}, in_prog={self.in_prog})"
+        )
 
     def set_running_actors_to(self, target_count):
-        self._log(f"setting count from {self.running_actor_count} to {target_count}")
         if target_count < self.running_actor_count:
             yield self.drain_to(target_count)
         elif target_count > self.running_actor_count:
             for _ in range(self.running_actor_count, target_count):
                 yield self.add_new_actor()
 
-    async def drain_to(self, target_count: int) -> int:
-        n = 0
-        for _ in range(target_count, self.running_actor_count):
-            n += 1
+    async def drain_to(self, target_count: int):
+        while self.running_actor_count > target_count:
             await self.poison_queue.queue.put(POISON_PILL)
-            await self._poisoning_done_future
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(self._poisoning_done_future),
+                    timeout=self._poison_timeout,
+                )
+            except asyncio.TimeoutError:
+                self._force_cancel_one()
+                self._poisoning_done_future.cancel()
             self._poisoning_done_future = self._loop.create_future()
-        return n
+
+    def _force_cancel_one(self):
+        if not self._actor_listening_async_task_dict:
+            return
+        _, task = self._actor_listening_async_task_dict.popitem()
+        task.cancel()
 
     async def add_new_actor(self):
         running_actor = self.dist_api.get_running_actor(
             actor_creator=self.actor_partial
         )
         listener_name = uuid.uuid1().hex
-        coroutine = self._listen(running_actor=running_actor, name=listener_name)
-        task = self._loop.create_task(coroutine, name=listener_name)
-        self._log("adding consumer", listener_task=task.get_name())
+        coro = self._listen(running_actor=running_actor, name=listener_name)
+        task = self._loop.create_task(coro, name=listener_name)
         self._actor_listening_async_task_dict[listener_name] = task
-
-    @property
-    def task_count(self):
-        return sum([q.size for q in self._task_queues.values()])
 
     @property
     def running_actor_count(self):
         return len(self._actor_listening_async_task_dict)
 
-    async def _listen(self, running_actor: "ActorBase", name: str):
-        # WARNING: if error happens here, it will get swallowed to the abyss
-        self._log("consumer listening", running=type(running_actor).__name__)
-        while True:
-            next_task, task_queue = await self._get_next_task()
-            try:
-                self.in_prog += 1
-                await self._process_task(running_actor, next_task, task_queue)
-            except ActorListenBreaker as e:
-                await self._end_actor(running_actor, e, name)
-                return
-            finally:
-                self.in_prog -= 1
+    async def _listen(self, running_actor: ActorBase, name: str):
+        try:
+            while True:
+                next_task, src_q = await self._get_next_task()
+                try:
+                    self.in_prog += 1
+                    await self._process_task(running_actor, next_task, src_q)
+                except ActorListenBreaker as e:
+                    await self._end_actor(running_actor, e, name)
+                    return
+                finally:
+                    self.in_prog -= 1
+        except asyncio.CancelledError:
+            self._safe_kill(running_actor)
+            return
+        except Exception as e:  # pragma: no cover
+            self._log("listener crashed", error=repr(e))
+            self._result_queue.put(TaskResult(e, False, self._task_queue))
+            self._safe_kill(running_actor)
+            self._actor_listening_async_task_dict.pop(name, None)
+            return
 
-    async def _get_next_task(self) -> tuple["SchedulerTask", bool]:
+    def _safe_kill(self, running_actor):
+        try:
+            self.dist_api.kill(running_actor)
+        except Exception:  # pragma: no cover
+            pass
+
+    async def _get_next_task(self):
         while True:
-            await asyncio.wait(self._wait_on_tasks, return_when="FIRST_COMPLETED")
-            for t_queue in self._sorted_queues:
-                if t_queue.done():
-                    return t_queue.pop(), t_queue
+            await asyncio.wait(
+                [self._task_queue.getting_task, self.poison_queue.getting_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if self.poison_queue.done():
+                return self.poison_queue.pop(), self.poison_queue
+            if self._task_queue.done():
+                return self._task_queue.pop(), self._task_queue
 
     async def _process_task(
-        self, running_actor: "ActorBase", task: "SchedulerTask", source_queue: TaskQueue
+        self,
+        running_actor: ActorBase,
+        task: "SchedulerTask",
+        source_queue: TaskQueue,
     ):
         if task is POISON_PILL:
             raise ActorPoisoned("poisoned")
+        if task.rate_costs:
+            while True:
+                wait = self._rate_gate.try_consume(task.rate_costs)
+                if wait <= 0:
+                    break
+                await asyncio.sleep(wait)
         try:
-            out = await self.dist_api.get_future(running_actor, task)
+            future = self.dist_api.get_future(running_actor, task)
+            if self._task_timeout is not None:
+                out = await asyncio.wait_for(future, timeout=self._task_timeout)
+            else:
+                out = await future
             if isinstance(out, Exception):
                 if isinstance(out, DistantException):
                     out = out.e.with_traceback(out.tb.as_traceback())
                 raise out
             self._result_queue.put(TaskResult(out, True, source_queue))
-            return 0
-        except ActorListenBreaker as e:
-            await self._task_queues[task.requirements].queue.put(task)
-            raise e
+            return
+        except ActorListenBreaker:
+            await self._task_queue.queue.put(task)
+            raise
+        except asyncio.TimeoutError:
+            task.fail_count += 1
+            if task.fail_count > task.max_fails:
+                err = TimeoutError(
+                    f"task timed out after {self._task_timeout}s "
+                    f"(actor={self.actor_cls.__name__})"
+                )
+                self._result_queue.put(TaskResult(err, False, source_queue))
+            else:
+                await self._task_queue.queue.put(task)
+            raise ActorListenBreaker("task_timeout")
         except self.dist_api.exception as e:
-            self._log("Remote consumption error ", e=e, te=type(e).__name__, task=task)
+            self._log("remote task error", error=repr(e))
             task.fail_count += 1
             if task.fail_count > task.max_fails:
                 exc = self.dist_api.parse_exception(e)
-                result = TaskResult(exc, False, source_queue)
-                self._result_queue.put(result)
+                self._result_queue.put(TaskResult(exc, False, source_queue))
             else:
-                await self._task_queues[task.requirements].queue.put(task)
+                await self._task_queue.queue.put(task)
 
-    async def _end_actor(self, running_actor: "ActorBase", e, name):
-        self._log("stopping consumer", reason=e, running=type(running_actor).__name__)
-        self.dist_api.kill(running_actor)
-        del self._actor_listening_async_task_dict[name]
-        if not isinstance(e, ActorPoisoned):
-            self._log("restarting consumer")
-            await self.add_new_actor()
+    async def _end_actor(self, running_actor: ActorBase, e, name):
+        self._safe_kill(running_actor)
+        self._actor_listening_async_task_dict.pop(name, None)
+        if isinstance(e, ActorPoisoned):
+            if not self._poisoning_done_future.done():
+                self._poisoning_done_future.set_result(True)
         else:
-            self._poisoning_done_future.set_result(True)
+            await self.add_new_actor()
 
-    def _log(self, s, **kwargs):
+    def _log(self, msg, **kwargs):
         if self._debug:
-            get_logger(**self._log_dic).info(s, **kwargs)
-
-    @property
-    def _wait_on_tasks(self):
-        return chain(
-            *[self._task_queues[k].tasks for k in self._task_keys],
-            [self.poison_queue.getting_task],
-        )
-
-    @property
-    def _sorted_queues(self):
-        keys = sorted(self._task_keys)
-        return reversed([self.poison_queue, *map(self._task_queues.get, keys)])
-
-    @property
-    def _task_keys(self):
-        return filter(self.capset.__ge__, self._task_queues.keys())
-
-    @property
-    def _log_dic(self):
-        return {
-            "actor": getattr(self.actor_partial.func, "__name__", None),
-            "tasks": self.task_count,
-            "actors_running": self.running_actor_count,
-        }
+            ctx = {
+                "actor": self.actor_cls.__name__,
+                "running": self.running_actor_count,
+                "in_prog": self.in_prog,
+                **kwargs,
+            }
+            logging.getLogger("atqo.actor_set").info(f"{msg} {ctx}")
 
 
+@dataclass
 class SchedulerTask:
-    def __init__(
-        self,
-        argument: Any,
-        requirements: list[Capability] = None,
-        properties: list[TaskPropertyBase] = None,
-        allowed_fail_count: int = 1,
-    ):
-        self.argument = argument
-        self.requirements = CapabilitySet(requirements or [])
-        self.properties = properties or []
-        self.max_fails = allowed_fail_count
+    argument: Any
+    actor: Optional[type[ActorBase]] = None
+    rate_costs: dict[str, int] = field(default_factory=dict)
+    allowed_fail_count: int = 1
+
+    def __post_init__(self):
+        self.max_fails = self.allowed_fail_count
         self.fail_count = 0
 
     def __repr__(self) -> str:
-        return f"Task: {self.argument}, " f"Requires: {self.requirements}, "
+        cls = getattr(self.actor, "__name__", self.actor)
+        return f"Task({self.argument!r}, actor={cls})"
 
 
 @dataclass

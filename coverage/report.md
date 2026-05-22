@@ -1,0 +1,26 @@
+| Name                                      |    Stmts |     Miss |   Cover |
+|------------------------------------------ | -------: | -------: | ------: |
+| atqo/\_\_init\_\_.py                      |        8 |        0 |    100% |
+| atqo/bases.py                             |       33 |        0 |    100% |
+| atqo/core.py                              |      377 |        1 |     99% |
+| atqo/distributed\_apis.py                 |       72 |        0 |    100% |
+| atqo/exceptions.py                        |       24 |        0 |    100% |
+| atqo/exchange.py                          |      162 |        0 |    100% |
+| atqo/lock\_stores.py                      |       33 |        0 |    100% |
+| atqo/rate.py                              |       61 |        0 |    100% |
+| atqo/simplified\_functions.py             |       46 |        0 |    100% |
+| atqo/tests/\_\_init\_\_.py                |        0 |        0 |    100% |
+| atqo/tests/integration/\_\_init\_\_.py    |        0 |        0 |    100% |
+| atqo/tests/integration/test\_io.py        |       33 |        0 |    100% |
+| atqo/tests/test\_basic.py                 |      105 |        0 |    100% |
+| atqo/tests/test\_coverage\_gaps.py        |      212 |        8 |     96% |
+| atqo/tests/test\_dist\_apis.py            |        5 |        0 |    100% |
+| atqo/tests/test\_exchange.py              |       52 |        0 |    100% |
+| atqo/tests/test\_hang\_resistance.py      |       70 |        0 |    100% |
+| atqo/tests/test\_lock\_store.py           |       24 |        0 |    100% |
+| atqo/tests/test\_parallelism.py           |       80 |        0 |    100% |
+| atqo/tests/test\_rate\_limits.py          |       45 |        0 |    100% |
+| atqo/tests/test\_simplified\_functions.py |       25 |        0 |    100% |
+| atqo/tests/test\_validation.py            |       64 |        0 |    100% |
+| atqo/utils.py                             |        8 |        0 |    100% |
+| **TOTAL**                                 | **1539** |    **9** | **99%** |

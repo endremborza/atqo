@@ -45,9 +45,10 @@ def test_single_actor_single_task():
     assert out == ["echo-hello"]
 
 
-def test_process_with_list():
+def test_refill_then_join_multi_task():
     with Scheduler(actors=[Echo], resources={"cpu": 2}) as sch:
-        out = list(sch.process([SchedulerTask(i, actor=Echo) for i in range(5)]))
+        sch.refill_task_queue([SchedulerTask(i, actor=Echo) for i in range(5)])
+        out = sch.join()
     assert sorted(out) == sorted([f"echo-{i}" for i in range(5)])
 
 
@@ -68,6 +69,49 @@ def test_process_with_batch_producer():
 
         out = list(sch.process(Producer()))
     assert sorted(out) == sorted(f"echo-{i}" for i in range(8))
+
+
+def test_process_refills_before_full_drain():
+    """min_queue_size backpressure: producer must be re-invoked while work
+    is still in flight, not only after the scheduler is fully idle.
+    """
+    import time
+
+    class Slow(SingleCPUActor):
+        def consume(self, x):
+            time.sleep(0.02)
+            return x
+
+    sizes_seen = []
+    total = 20
+    batch = 10
+    min_queue = 4
+
+    with Scheduler(actors=[Slow], resources={"cpu": 2}) as sch:
+        produced = {"i": 0}
+
+        def producer():
+            sizes_seen.append(sch._in_progress_or_queued)
+            if produced["i"] >= total:
+                return []
+            chunk = list(range(produced["i"], produced["i"] + batch))
+            produced["i"] += batch
+            return [SchedulerTask(x, actor=Slow) for x in chunk]
+
+        out = list(sch.process(producer, min_queue_size=min_queue))
+
+    assert sorted(out) == list(range(total))
+    # Producer must be invoked between batches while work is still in flight.
+    # If backpressure is broken (only refills after full drain), every observed
+    # size would be 0.
+    mid_refills = [s for s in sizes_seen if s > 0]
+    assert mid_refills, (
+        f"backpressure broken: producer only re-called at idle ({sizes_seen})"
+    )
+    # And those refills should fire near min_queue_size, not far above it.
+    assert max(mid_refills) <= min_queue, (
+        f"refill fired too late, in_flight={mid_refills}, threshold={min_queue}"
+    )
 
 
 def test_partial_actor_with_init_arg():
@@ -98,7 +142,7 @@ def test_task_with_no_registered_actors_rejected():
 
     with Scheduler(actors=[], resources={"cpu": 1}) as sch:
         with pytest.raises(UnknownActor):
-            list(sch.process([SchedulerTask(1)]))
+            sch.refill_task_queue([SchedulerTask(1)])
 
 
 def test_user_exception_surfaced_after_retries():
