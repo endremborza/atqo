@@ -1,4 +1,0 @@
-v0.1.6
-------
-
-dump ray, fix partial

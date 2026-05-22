@@ -1,5 +1,0 @@
-v0.0.3
-------
-
-- add partial handling to ray
-- simplified functions
