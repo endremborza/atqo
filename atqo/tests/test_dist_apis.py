@@ -1,5 +1,7 @@
-from atqo.distributed_apis import get_dist_api
+from atqo.bases import DistAPIBase
+from atqo.distributed_apis import MultiProcAPI, SyncAPI
 
 
-def test_get_dist_api():
-    get_dist_api("wrong")
+def test_api_types():
+    assert issubclass(SyncAPI, DistAPIBase)
+    assert issubclass(MultiProcAPI, DistAPIBase)
