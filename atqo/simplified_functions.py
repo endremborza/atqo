@@ -83,14 +83,14 @@ def parallel_map(
     return parallel_consume(
         partial(_ActWrap, fun=fun),
         iterable,
-        dist_api,
-        batch_size,
-        min_queue_size,
-        workers,
-        raise_errors,
-        verbose,
-        pbar,
-        allowed_fail_count,
+        dist_api=dist_api,
+        batch_size=batch_size,
+        min_queue_size=min_queue_size,
+        workers=workers,
+        raise_errors=raise_errors,
+        verbose=verbose,
+        pbar=pbar,
+        allowed_fail_count=allowed_fail_count,
     )
 
 
