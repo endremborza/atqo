@@ -56,6 +56,52 @@ def _underlying_class(actor) -> type[ActorBase]:
     return cls
 
 
+@dataclass
+class ActorSlot:
+    """A named scheduler slot backed by an ``ActorBase`` subclass.
+
+    Multiple slots may share one actor class, each carrying its own ``kwargs``
+    (passed to the constructor) and ``requirements`` (resource profile). This
+    lets one actor class back several distinct resource profiles without
+    subclassing it per profile. Reference a slot from a task with
+    ``SchedulerTask(arg, actor=slot_name)``.
+
+    ``name`` defaults to the class name; ``requirements`` defaults to the
+    class-level ``requirements``.
+    """
+
+    actor: type[ActorBase]
+    name: Optional[str] = None
+    kwargs: dict = field(default_factory=dict)
+    requirements: Optional[dict[str, int]] = None
+
+    @property
+    def key(self) -> str:
+        return self.name if self.name is not None else self.actor.__name__
+
+    def _partial(self) -> partial:
+        return partial(self.actor, **self.kwargs)
+
+    def _requirements(self) -> dict[str, int]:
+        explicit = self.requirements
+        return dict(self.actor.requirements if explicit is None else explicit)
+
+
+@dataclass
+class _Slot:
+    name: str
+    creator: partial
+    requirements: dict[str, int]
+
+
+def _to_slot(entry: Union[type[ActorBase], partial, ActorSlot]) -> _Slot:
+    if isinstance(entry, ActorSlot):
+        return _Slot(entry.key, entry._partial(), entry._requirements())
+    cls = _underlying_class(entry)
+    creator = entry if isinstance(entry, partial) else partial(entry)
+    return _Slot(cls.__name__, creator, dict(cls.requirements))
+
+
 class Scheduler:
     """Resource-aware async task scheduler.
 
@@ -71,7 +117,7 @@ class Scheduler:
 
     def __init__(
         self,
-        actors: Optional[Iterable[Union[type[ActorBase], partial]]] = None,
+        actors: Optional[Iterable[Union[type[ActorBase], partial, ActorSlot]]] = None,
         resources: Optional[dict[str, int]] = None,
         rate_limits: Optional[dict[str, RateLimit]] = None,
         distributed_system: type[DistAPIBase] = SyncAPI,
@@ -85,35 +131,32 @@ class Scheduler:
         resources = dict(resources) if resources is not None else _default_resources()
         rate_limits = dict(rate_limits) if rate_limits else {}
 
-        partials: dict[type[ActorBase], partial] = {}
+        slots: dict[str, _Slot] = {}
         for entry in actors:
-            cls = _underlying_class(entry)
-            if cls in partials:
-                raise ValueError(
-                    f"actor class {cls.__name__} registered more than once"
-                )
-            partials[cls] = entry if isinstance(entry, partial) else partial(entry)
+            slot = _to_slot(entry)
+            if slot.name in slots:
+                raise ValueError(f"actor slot {slot.name!r} registered more than once")
+            slots[slot.name] = slot
 
-        for cls in partials:
-            for res, n in cls.requirements.items():
+        for slot in slots.values():
+            for res, n in slot.requirements.items():
                 if res not in resources:
                     raise UnknownResource(
-                        f"{cls.__name__} requires {res!r}, not in scheduler "
+                        f"{slot.name} requires {res!r}, not in scheduler "
                         f"resources {list(resources)}"
                     )
                 if not isinstance(n, int) or n <= 0:
                     raise ValueError(
-                        f"{cls.__name__}.requirements[{res!r}] must be a positive "
+                        f"{slot.name}.requirements[{res!r}] must be a positive "
                         f"int, got {n!r}"
                     )
                 if n > resources[res]:
                     raise NotEnoughResources(
-                        f"{cls.__name__} requires {res}={n} but resource pool "
+                        f"{slot.name} requires {res}={n} but resource pool "
                         f"has {res}={resources[res]}"
                     )
 
-        self._actor_classes = list(partials.keys())
-        self._actor_partials = partials
+        self._slots = slots
         self._resources = resources
         self._rate_gate = RateGate(rate_limits)
         self._task_timeout = task_timeout
@@ -125,16 +168,16 @@ class Scheduler:
 
         self._loop, self._thread = _get_loop_of_daemon()
         self._result_queue: Queue[TaskResult] = Queue()
-        self._task_queues: dict[type[ActorBase], TaskQueue] = {
-            cls: TaskQueue(self._loop) for cls in self._actor_classes
+        self._task_queues: dict[str, TaskQueue] = {
+            name: TaskQueue(self._loop) for name in self._slots
         }
         self._dist_api = distributed_system()
-        self._actor_sets: dict[type[ActorBase], ActorSet] = {
-            cls: ActorSet(
-                partials[cls],
+        self._actor_sets: dict[str, ActorSet] = {
+            name: ActorSet(
+                slot.creator,
                 self._dist_api,
-                cls,
-                self._task_queues[cls],
+                slot.name,
+                self._task_queues[name],
                 self._result_queue,
                 self._loop,
                 self._rate_gate,
@@ -142,11 +185,17 @@ class Scheduler:
                 self._poison_timeout,
                 self._verbose,
             )
-            for cls in self._actor_classes
+            for name, slot in slots.items()
         }
-        self._exchange = ResourceExchange(self._actor_classes, resources)
+        self._exchange = ResourceExchange(
+            {name: slot.requirements for name, slot in slots.items()}, resources
+        )
         self._closed = False
-        self._log("scheduler ready", actors=list(partials), resources=resources)
+        self._log(
+            "scheduler ready",
+            actors=[s.name for s in slots.values()],
+            resources=resources,
+        )
 
     def __del__(self):
         try:
@@ -205,7 +254,7 @@ class Scheduler:
             self.cleanup()
             raise NotEnoughResourcesToContinue(
                 f"no actor type can fulfill demand "
-                f"{ {c.__name__: n for c, n in need.items() if n} }"
+                f"{ {c: n for c, n in need.items() if n} }"
             )
         self._set_actor_sets(new_ideals)
         for task in tasks:
@@ -304,21 +353,29 @@ class Scheduler:
 
     def _validate_task(self, task: "SchedulerTask"):
         if task.actor is None:
-            if len(self._actor_classes) != 1:
+            if len(self._slots) != 1:
                 raise UnknownActor(
                     "task.actor=None requires exactly one registered actor "
-                    f"class; have {[c.__name__ for c in self._actor_classes]}"
+                    f"slot; have {list(self._slots)}"
                 )
-            task.actor = self._actor_classes[0]
+            task.actor = next(iter(self._slots))
         else:
-            task.actor = _underlying_class(task.actor)
-            if task.actor not in self._task_queues:
-                raise UnknownActor(
-                    f"task.actor={task.actor!r} not registered; "
-                    f"have {[c.__name__ for c in self._actor_classes]}"
-                )
+            task.actor = self._resolve_actor_key(task.actor)
         if task.rate_costs:
             self._rate_gate.validate_cost(task.rate_costs)
+
+    def _resolve_actor_key(self, actor):
+        if isinstance(actor, ActorSlot):
+            key = actor.key
+        elif isinstance(actor, str):
+            key = actor
+        else:
+            key = _underlying_class(actor).__name__
+        if key not in self._slots:
+            raise UnknownActor(
+                f"task.actor={actor!r} not registered; have {list(self._slots)}"
+            )
+        return key
 
     def _log(self, msg, **kwargs):
         if self._verbose:
@@ -413,7 +470,7 @@ class ActorSet:
         self,
         actor_partial: partial,
         dist_api: DistAPIBase,
-        actor_cls: type[ActorBase],
+        name: str,
         task_queue: TaskQueue,
         result_queue: Queue,
         loop: asyncio.AbstractEventLoop,
@@ -424,7 +481,7 @@ class ActorSet:
     ) -> None:
         self.actor_partial = actor_partial
         self.dist_api = dist_api
-        self.actor_cls = actor_cls
+        self.name = name
         self._task_queue = task_queue
         self._result_queue = result_queue
         self._loop = loop
@@ -440,7 +497,7 @@ class ActorSet:
 
     def __repr__(self):
         return (
-            f"ActorSet({self.actor_cls.__name__}, "
+            f"ActorSet({self.name}, "
             f"running={self.running_actor_count}, in_prog={self.in_prog})"
         )
 
@@ -555,8 +612,7 @@ class ActorSet:
             task.fail_count += 1
             if task.fail_count > task.max_fails:
                 err = TimeoutError(
-                    f"task timed out after {self._task_timeout}s "
-                    f"(actor={self.actor_cls.__name__})"
+                    f"task timed out after {self._task_timeout}s (actor={self.name})"
                 )
                 self._result_queue.put(TaskResult(err, False, source_queue))
             else:
@@ -583,7 +639,7 @@ class ActorSet:
     def _log(self, msg, **kwargs):
         if self._debug:
             ctx = {
-                "actor": self.actor_cls.__name__,
+                "actor": self.name,
                 "running": self.running_actor_count,
                 "in_prog": self.in_prog,
                 **kwargs,
@@ -594,7 +650,7 @@ class ActorSet:
 @dataclass
 class SchedulerTask:
     argument: Any
-    actor: Optional[type[ActorBase]] = None
+    actor: Optional[Union[type[ActorBase], str, partial, "ActorSlot"]] = None
     rate_costs: dict[str, int] = field(default_factory=dict)
     allowed_fail_count: int = 1
 

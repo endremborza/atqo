@@ -1,13 +1,10 @@
 from collections import defaultdict
 from functools import cached_property
 from itertools import product
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .exceptions import NotEnoughResources
 from .utils import subdict, sumdict
-
-if TYPE_CHECKING:
-    from .bases import ActorBase  # pragma: no cover
 
 
 class NumStore:
@@ -60,26 +57,27 @@ class NumStore:
         return type(self)({k: v for k, v in self if v > 0})
 
 
-def requirements_store(cls: "type[ActorBase]") -> NumStore:
-    return NumStore(dict(cls.requirements))
-
-
 class ResourceExchange:
-    """Trade idle resources for running actors of registered classes.
+    """Trade idle resources for running actors of registered slots.
 
     Trades are NumStore over keys that are either an int (index into
-    ``self._sources``) or an actor class. Resources are integer pools held for
-    the lifetime of each actor instance.
+    ``self._sources``) or a slot name. Resources are integer pools held for the
+    lifetime of each actor instance.
+
+    ``actors`` maps each slot name to its resource requirements.
     """
 
     def __init__(
         self,
-        actor_classes: Iterable["type[ActorBase]"],
+        actors: Dict[str, Dict[str, int]],
         resources: Dict[str, int],
     ) -> None:
         self._sources: List[Tuple[str, int]] = list(resources.items())
-        self._actor_classes = sorted(actor_classes, key=lambda c: c.__name__)
-        self.actors_running: Dict[type, int] = {cls: 0 for cls in self._actor_classes}
+        self._reqs: Dict[str, NumStore] = {
+            name: NumStore(dict(r)) for name, r in actors.items()
+        }
+        self._keys = sorted(self._reqs)
+        self.actors_running: Dict[str, int] = {name: 0 for name in self._keys}
         self.tasks_queued = NumStore()
         self.idle_sources: List[int] = [limit for _, limit in self._sources]
 
@@ -135,19 +133,17 @@ class ResourceExchange:
             else:
                 self.actors_running[rid] += num
 
-    def _get_source_prices(self, cls: "type[ActorBase]") -> List[NumStore]:
-        reqs = requirements_store(cls)
+    def _get_source_prices(self, key: str) -> List[NumStore]:
+        reqs = self._reqs[key]
         by_source = self._source_combs(reqs)
         if not by_source and reqs.base_dict:
-            raise NotEnoughResources(
-                f"can't ever start {cls.__name__}: requires {reqs}"
-            )
+            raise NotEnoughResources(f"can't ever start {key}: requires {reqs}")
         if not by_source:
-            return [NumStore({cls: 1})]
-        return [NumStore({cls: 1}) - p for p in by_source]
+            return [NumStore({key: 1})]
+        return [NumStore({key: 1}) - p for p in by_source]
 
-    def _get_barter_prices(self, cls: "type[ActorBase]") -> List[NumStore]:
-        bf = BarterFinder(cls, self._actor_classes)
+    def _get_barter_prices(self, key: str) -> List[NumStore]:
+        bf = BarterFinder(key, self._keys, self._reqs)
         barters: List[NumStore] = []
         for resources, barter_dict in bf.barter_pairs:
             if resources.min_value > 0 and resources.base_dict:
@@ -175,9 +171,9 @@ class ResourceExchange:
     @cached_property
     def _possible_trades(self) -> List[NumStore]:
         all_trades: List[NumStore] = []
-        for cls in self._actor_classes:
-            all_trades += self._get_source_prices(cls)
-            all_trades += self._get_barter_prices(cls)
+        for key in self._keys:
+            all_trades += self._get_source_prices(key)
+            all_trades += self._get_barter_prices(key)
         return all_trades + [t * -1 for t in all_trades]
 
     @cached_property
@@ -189,27 +185,26 @@ class ResourceExchange:
 
 
 class BarterFinder:
-    def __init__(
-        self, cls: "type[ActorBase]", classes: List["type[ActorBase]"]
-    ) -> None:
-        self._cls = cls
-        self._others = [c for c in classes if c is not cls]
+    def __init__(self, key: str, keys: List[str], reqs: Dict[str, NumStore]) -> None:
+        self._key = key
+        self._reqs = reqs
+        self._others = [k for k in keys if k != key]
         self.barter_pairs: List[Tuple[NumStore, NumStore]] = []
-        self._walk(requirements_store(cls))
+        self._walk(reqs[key])
 
     def _walk(self, available: NumStore, so_far: NumStore = NumStore()):
         for other in self._others:
-            rest = available - requirements_store(other)
+            rest = available - self._reqs[other]
             if rest.base_dict and rest.min_value >= 0:
                 new = so_far + NumStore({other: 1})
-                self.barter_pairs.append((rest, new + NumStore({self._cls: -1})))
+                self.barter_pairs.append((rest, new + NumStore({self._key: -1})))
                 self._walk(rest, new)
 
 
 class ExchangeState:
     def __init__(self, task_dic: NumStore, actor_dic: dict):
         self.rem_acts = actor_dic.copy()
-        self.holes: Dict[type, int] = defaultdict(int)
+        self.holes: Dict[str, int] = defaultdict(int)
         for tcls, tcount in task_dic:
             have = self.rem_acts.get(tcls, 0)
             if have >= tcount:

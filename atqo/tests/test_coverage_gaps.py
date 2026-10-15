@@ -79,22 +79,16 @@ def test_numstore_eq():
 
 
 def test_resource_exchange_repr():
-    cex = ResourceExchange([Echo], {"cpu": 4})
+    cex = ResourceExchange({"Echo": {"cpu": 1}}, {"cpu": 4})
     s = repr(cex)
     assert "ResourceExchange" in s
     assert "Echo" in s
 
 
 def test_resource_exchange_empty_requirements():
-    class Free(ActorBase):
-        requirements = {}
-
-        def consume(self, x):
-            return x
-
-    cex = ResourceExchange([Free], {"cpu": 4})
-    out = cex.set_values({Free: 5})
-    assert out[Free] >= 1
+    cex = ResourceExchange({"Free": {}}, {"cpu": 4})
+    out = cex.set_values({"Free": 5})
+    assert out["Free"] >= 1
 
 
 def test_actor_with_empty_requirements_runs():
@@ -149,7 +143,7 @@ def test_verbose_logging_paths(caplog):
 
 def test_actor_set_repr():
     with Scheduler(actors=[Echo], resources={"cpu": 1}) as sch:
-        aset = sch._actor_sets[Echo]
+        aset = sch._actor_sets["Echo"]
         s = repr(aset)
     assert "ActorSet" in s and "Echo" in s
 
@@ -252,7 +246,7 @@ def test_drain_to_with_busy_actor_directly():
         resources={"cpu": 1},
         poison_timeout=0.3,
     ) as sch:
-        aset = sch._actor_sets[StuckFuture]
+        aset = sch._actor_sets["StuckFuture"]
         # Hand-craft a listener task that will never resolve and never check
         # for cancellation cooperatively.
         never = sch._loop.create_future()

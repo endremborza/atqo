@@ -1,7 +1,7 @@
 """Async task queue orchestrator with resource-aware scheduling."""
 
 from .bases import ActorBase, DistAPIBase, SingleCPUActor
-from .core import Scheduler, SchedulerTask
+from .core import ActorSlot, Scheduler, SchedulerTask
 from .distributed_apis import (
     MultiProcAPI,
     SyncAPI,
@@ -24,6 +24,7 @@ __version__ = "2.0.0"
 
 __all__ = [
     "ActorBase",
+    "ActorSlot",
     "DistAPIBase",
     "ImpossibleRateCost",
     "MultiProcAPI",

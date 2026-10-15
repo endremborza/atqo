@@ -10,21 +10,13 @@ Each sleep (0.1s) is well above scheduling noise; thresholds leave a
 comfortable margin for the broken-vs-correct gap.
 """
 
-import asyncio
 import time
 
 from atqo import ActorBase, RateLimit, Scheduler, SchedulerTask, SingleCPUActor
-from atqo.bases import DistAPIBase
+
+from .conftest import ThreadedAPI
 
 SLEEP = 0.1
-
-
-class ThreadedAPI(DistAPIBase):
-    @staticmethod
-    def get_future(actor, next_task):
-        return asyncio.ensure_future(
-            asyncio.to_thread(actor.consume, next_task.argument)
-        )
 
 
 class Slow(SingleCPUActor):
