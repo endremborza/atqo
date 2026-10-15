@@ -46,6 +46,15 @@ class _Boom(SingleCPUActor):
         raise ValueError(f"boom: {x}")
 
 
+class _Suicidal(SingleCPUActor):
+    """Vanishes mid-task without answering (simulates segfault / OOM / kill)."""
+
+    def consume(self, x):
+        import os
+
+        os._exit(1)
+
+
 class _MPWedger(SingleCPUActor):
     """Wedges only the subprocess (not the main loop). MultiProc only."""
 
@@ -289,6 +298,25 @@ def test_multiproc_distant_exception_unwraps():
     assert len(out) == 1
     assert isinstance(out[0], ValueError)
     assert out[0].__traceback__ is not None
+
+
+@pytest.mark.timeout(20)
+def test_dead_worker_surfaces_and_stop_does_not_hang():
+    """A worker that vanishes mid-task puts no result on out_q. The result wait
+    must give up (worker is gone) and surface a failure, and the full
+    MultiProcAPI stop sequence run on context exit (including pool.shutdown)
+    must not hang waiting on that result."""
+    with Scheduler(
+        actors=[_Suicidal],
+        resources={"cpu": 1},
+        distributed_system=MultiProcAPI,
+    ) as sch:
+        sch.refill_task_queue(
+            [SchedulerTask(1, actor=_Suicidal, allowed_fail_count=0)]
+        )
+        out = sch.join()
+    assert len(out) == 1
+    assert isinstance(out[0], Exception)
 
 
 @pytest.mark.timeout(5)

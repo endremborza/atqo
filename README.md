@@ -92,10 +92,10 @@ SchedulerTask(url, actor=LoggedInBrowser)
 
 ## Hang protection
 
-Every blocking wait in the scheduler is bounded. Optional knobs on `Scheduler(...)`:
+Blocking waits in the scheduler re-check their exit conditions on a poll interval rather than blocking indefinitely. Optional knobs on `Scheduler(...)`:
 
 - `task_timeout`: per-task wall-clock cap. Exceeded attempts fail like any exception (count against `allowed_fail_count`).
-- `stall_timeout`: if no progress for this long, raise `SchedulerStalled`.
+- `stall_timeout`: if no progress for this long, raise `SchedulerStalled`. This also bounds the task-enqueue wait — without it, enqueuing onto a wedged event loop can block indefinitely (`_put_timeout` defaults to `None`).
 - `poison_timeout`: how long graceful actor drain waits before force-cancel (default 5s).
 
 `cleanup()` and `join()` always terminate; they cancel listeners and stop the event loop unconditionally.
