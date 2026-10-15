@@ -3,7 +3,7 @@ from operator import add, sub
 
 
 def dic_merge(d1: dict, d2: dict, _def, fun):
-    return {k: fun(d1.get(k, _def), d2.get(k, _def)) for k in [*d1, *d2]}
+    return {k: fun(d1.get(k, _def), d2.get(k, _def)) for k in d1.keys() | d2.keys()}
 
 
 def dic_val_filt(dic):
