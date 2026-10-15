@@ -198,6 +198,4 @@ def get_lock(lock_id):
 
 
 def acquire_lock(lock_id):
-    lock = get_lock(lock_id)
-    lock.acquire()
-    return lock
+    return _GLOBAL_LOCK_STORE.acquire(lock_id)
