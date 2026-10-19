@@ -5,6 +5,7 @@ no cover`` in source."""
 import threading
 import time
 from functools import partial
+from traceback import format_exception
 
 import pytest
 
@@ -297,7 +298,7 @@ def test_multiproc_distant_exception_unwraps():
         out = sch.join()
     assert len(out) == 1
     assert isinstance(out[0], ValueError)
-    assert out[0].__traceback__ is not None
+    assert 'raise ValueError(f"boom: {x}")' in "".join(format_exception(out[0]))
 
 
 @pytest.mark.timeout(20)

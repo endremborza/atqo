@@ -6,7 +6,7 @@ authors = [{name = "Endre Márk Borza", email = "endremborza@gmail.com"}]
 license = {file = "LICENSE"}
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["tblib"]
+dependencies = []
 
 [project.optional-dependencies]
 fancy = ["tqdm"]

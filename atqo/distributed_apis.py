@@ -11,8 +11,6 @@ from multiprocessing.managers import SyncManager
 from threading import Thread
 from typing import TYPE_CHECKING, Any
 
-from tblib import Traceback
-
 from .bases import ActorBase, DistAPIBase
 from .exceptions import DistantException
 from .lock_stores import MpLockStore, ThreadLockStore
@@ -122,7 +120,7 @@ def _work_mp_actor(actor_cls, in_q, out_q, setup_q, store):  # pragma: no cover
         try:
             res = actor.consume(arg.arg)
         except Exception as e:
-            res = DistantException(e, Traceback(e.__traceback__))
+            res = DistantException.wrap(e)
         out_q.put(res)
 
 

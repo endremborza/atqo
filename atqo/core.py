@@ -601,7 +601,7 @@ class ActorSet:
                 out = await future
             if isinstance(out, Exception):
                 if isinstance(out, DistantException):
-                    out = out.e.with_traceback(out.tb.as_traceback())
+                    out = out.unwrap()
                 raise out
             self._result_queue.put(TaskResult(out, True, source_queue))
             return
