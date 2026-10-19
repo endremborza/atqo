@@ -75,6 +75,7 @@ class MPActorWrap(ActorBase):
         # arg, an import blowing up) surfaces instead of hanging this get().
         res = _recv_or_worker_died(_setup_q, self.proc.pid)
         if isinstance(res, Exception):
+            self.proc.join(timeout=_WORKER_STOP_GRACE)
             raise res
 
     def consume(self, task_arg):
@@ -102,7 +103,7 @@ class DistArg:
     poison: bool = False
 
 
-def _work_mp_actor(actor_cls, in_q, out_q, setup_q, store):  # pragma: no cover
+def _work_mp_actor(actor_cls, in_q, out_q, setup_q, store):
     _set_parent_death_signal()
     global _GLOBAL_LOCK_STORE
     _GLOBAL_LOCK_STORE = store
@@ -154,7 +155,7 @@ def _pid_alive(pid: int) -> bool:
     # yet lingers as a zombie until stop() joins it — and stop() runs after the
     # result wait. os.kill(pid, 0) can't tell a zombie from a live process, so
     # check /proc; a zombie will never answer, so it's "dead" for our purposes.
-    if sys.platform != "linux":
+    if sys.platform != "linux":  # pragma: no cover
         return True
     try:
         with open(f"/proc/{pid}/stat", "rb") as f:
@@ -164,24 +165,22 @@ def _pid_alive(pid: int) -> bool:
     return state != b"Z"
 
 
-def _set_parent_death_signal():  # pragma: no cover
+def _set_parent_death_signal():
     """Linux: have the kernel SIGKILL this worker if the parent dies, so an
     abruptly-killed scheduler (SIGKILL, crash) can't leak blocked workers that
     sit forever holding resources/ports."""
-    if sys.platform != "linux":
+    if sys.platform != "linux":  # pragma: no cover
         return
     try:
         PR_SET_PDEATHSIG = 1
-        ctypes.CDLL("libc.so.6", use_errno=True).prctl(
-            PR_SET_PDEATHSIG, signal.SIGKILL
-        )
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
         if os.getppid() == 1:  # parent already died before prctl ran
-            os.kill(os.getpid(), signal.SIGKILL)
-    except Exception:
+            os.kill(os.getpid(), signal.SIGKILL)  # pragma: no cover
+    except Exception:  # pragma: no cover
         pass
 
 
-def _poison_queue(in_q: mp.Queue):  # pragma: no cover
+def _poison_queue(in_q: mp.Queue):
     in_q.put(DistArg(None, True))
 
 

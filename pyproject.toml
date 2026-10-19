@@ -24,6 +24,9 @@ path = "atqo/__init__.py"
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 
+[tool.coverage.run]
+concurrency = ["multiprocessing", "thread"]
+
 [tool.pytest.ini_options]
 addopts = "-s --timeout=30 --timeout-method=thread"
 

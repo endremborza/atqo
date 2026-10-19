@@ -51,7 +51,7 @@ class DistantException(Exception):
         self.tb = tb
 
     @classmethod
-    def wrap(cls, e: Exception) -> "DistantException":  # pragma: no cover
+    def wrap(cls, e: Exception) -> "DistantException":
         return cls(e, "".join(traceback.format_exception(e)))
 
     def unwrap(self) -> Exception:

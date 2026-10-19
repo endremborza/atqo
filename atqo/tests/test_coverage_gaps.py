@@ -50,7 +50,7 @@ class _Boom(SingleCPUActor):
 class _Suicidal(SingleCPUActor):
     """Vanishes mid-task without answering (simulates segfault / OOM / kill)."""
 
-    def consume(self, x):
+    def consume(self, x):  # pragma: no cover
         import os
 
         os._exit(1)
@@ -59,7 +59,7 @@ class _Suicidal(SingleCPUActor):
 class _MPWedger(SingleCPUActor):
     """Wedges only the subprocess (not the main loop). MultiProc only."""
 
-    def consume(self, x):
+    def consume(self, x):  # pragma: no cover
         time.sleep(60)
         return x
 
@@ -312,9 +312,7 @@ def test_dead_worker_surfaces_and_stop_does_not_hang():
         resources={"cpu": 1},
         distributed_system=MultiProcAPI,
     ) as sch:
-        sch.refill_task_queue(
-            [SchedulerTask(1, actor=_Suicidal, allowed_fail_count=0)]
-        )
+        sch.refill_task_queue([SchedulerTask(1, actor=_Suicidal, allowed_fail_count=0)])
         out = sch.join()
     assert len(out) == 1
     assert isinstance(out[0], Exception)
